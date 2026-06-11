@@ -1,0 +1,5 @@
+timezone: "Asia/Kolkata"
+session_open: "09:15"
+session_close: "15:30"
+corporate_action_fail_closed: true
+holidays: []

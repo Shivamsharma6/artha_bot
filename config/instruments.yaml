@@ -1,0 +1,7 @@
+universe_refresh_seconds: 300
+include_top_gainers: true
+include_top_losers: true
+include_top_movers: true
+include_high_volume_movers: true
+stale_data_blocks_trading: true
+

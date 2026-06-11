@@ -1,0 +1,95 @@
+strategy_version: "bootstrap-v1"
+market: "NSE"
+intraday_only: true
+allow_long: true
+allow_short: true
+prioritize_market_open: true
+prioritize_market_close: true
+
+runtime_strategies:
+  versions:
+    - version: "momentum-v1"
+      engine: "momentum"
+      enabled: true
+      params:
+        min_move_pct: "0.01"
+    - version: "breakout-v1"
+      engine: "breakout"
+      enabled: true
+      params:
+        min_breakout_pct: "0.005"
+        resistance_by_symbol:
+          INFY: "100"
+          TCS: "100"
+        support_by_symbol:
+          INFY: "100"
+          TCS: "100"
+    - version: "reversal-v1"
+      engine: "reversal"
+      enabled: true
+      params:
+        min_reversal_pct: "0.02"
+    - version: "volume-mover-v1"
+      engine: "volume_mover"
+      enabled: true
+      params:
+        min_volume: 10000
+        min_move_pct: "0.01"
+
+calibration:
+  versions:
+    - version: "momentum-v1"
+      engine: "momentum"
+      symbols: ["INFY", "TCS"]
+      resolution: "1m"
+      from_time: "2023-01-01T09:15:00+05:30"
+      to_time: "2026-01-02T15:30:00+05:30"
+      quantity: 1
+      walk_forward_windows: 4
+      out_of_sample_tested: true
+      survivorship_bias_checked: true
+      params:
+        min_move_pct: "0.01"
+    - version: "breakout-v1"
+      engine: "breakout"
+      symbols: ["INFY", "TCS"]
+      resolution: "1m"
+      from_time: "2023-01-01T09:15:00+05:30"
+      to_time: "2026-01-02T15:30:00+05:30"
+      quantity: 1
+      walk_forward_windows: 4
+      out_of_sample_tested: true
+      survivorship_bias_checked: true
+      params:
+        min_breakout_pct: "0.005"
+        resistance_by_symbol:
+          INFY: "100"
+          TCS: "100"
+        support_by_symbol:
+          INFY: "100"
+          TCS: "100"
+    - version: "reversal-v1"
+      engine: "reversal"
+      symbols: ["INFY", "TCS"]
+      resolution: "1m"
+      from_time: "2023-01-01T09:15:00+05:30"
+      to_time: "2026-01-02T15:30:00+05:30"
+      quantity: 1
+      walk_forward_windows: 4
+      out_of_sample_tested: true
+      survivorship_bias_checked: true
+      params:
+        min_reversal_pct: "0.02"
+    - version: "volume-mover-v1"
+      engine: "volume_mover"
+      symbols: ["INFY", "TCS"]
+      resolution: "1m"
+      from_time: "2023-01-01T09:15:00+05:30"
+      to_time: "2026-01-02T15:30:00+05:30"
+      quantity: 1
+      walk_forward_windows: 4
+      out_of_sample_tested: true
+      survivorship_bias_checked: true
+      params:
+        min_volume: 10000
+        min_move_pct: "0.01"

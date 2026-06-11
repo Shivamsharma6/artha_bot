@@ -1,0 +1,9 @@
+starting_capital: "5000"
+max_risk_per_trade_pct: "0.01"
+max_daily_loss_pct: "0.03"
+min_allocation_pct: "0.05"
+max_trades_per_day: 3
+quote_max_age_seconds: 3
+square_off_time: "15:15"
+leverage_allowed: false
+

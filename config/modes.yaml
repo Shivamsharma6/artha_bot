@@ -1,0 +1,4 @@
+default_mode: "PAPER"
+live_enabled: false
+requires_human_live_approval: true
+

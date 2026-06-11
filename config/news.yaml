@@ -1,0 +1,15 @@
+newsapi_domains:
+  - "moneycontrol.com"
+  - "economictimes.indiatimes.com"
+  - "business-standard.com"
+  - "livemint.com"
+company_terms:
+  INFY:
+    - "Infosys"
+    - "Infosys Ltd"
+  RELIANCE:
+    - "Reliance Industries"
+    - "Reliance Industries Ltd"
+  TCS:
+    - "Tata Consultancy Services"
+    - "TCS Ltd"

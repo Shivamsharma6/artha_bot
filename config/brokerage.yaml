@@ -1,0 +1,9 @@
+brokerage_rate: "0.0003"
+brokerage_cap: "20"
+stt_sell_rate: "0.00025"
+exchange_txn_rate: "0.0000322"
+sebi_turnover_rate: "0.000001"
+stamp_buy_rate: "0.00003"
+gst_rate: "0.18"
+slippage_rate: "0.0005"
+

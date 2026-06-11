@@ -1,0 +1,35 @@
+environment: "paper-local"
+mode: "PAPER"
+live_enabled: false
+scheduler:
+  timezone: "Asia/Kolkata"
+  jobs:
+    - name: "instrument-refresh-nse"
+      type: "instrument_refresh"
+      enabled: true
+      critical: true
+      run_at: "08:30"
+    - name: "news-ingest-core-watchlist"
+      type: "news_ingestion"
+      enabled: true
+      critical: false
+      run_at: "08:45"
+      symbols:
+        - "INFY"
+        - "RELIANCE"
+        - "TCS"
+    - name: "live-feed-supervision"
+      type: "live_feed_supervision"
+      enabled: true
+      critical: true
+      run_at: "09:00"
+    - name: "operational-learning-rerun"
+      type: "learning_rerun"
+      enabled: true
+      critical: false
+      run_at: "16:00"
+    - name: "strategy-calibration-rerun"
+      type: "strategy_calibration"
+      enabled: true
+      critical: false
+      run_at: "16:30"
