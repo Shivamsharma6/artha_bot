@@ -15,6 +15,7 @@ def test_deployment_config_loads_paper_scheduler_jobs_from_yaml():
         "instrument-refresh-nse",
         "news-ingest-core-watchlist",
         "live-feed-supervision",
+        "broker-state-reconciliation",
         "operational-learning-rerun",
         "strategy-calibration-rerun",
     ]
@@ -22,8 +23,10 @@ def test_deployment_config_loads_paper_scheduler_jobs_from_yaml():
     assert config.scheduler.jobs[0].critical
     assert config.scheduler.jobs[1].enabled
     assert config.scheduler.jobs[1].symbols == ["INFY", "RELIANCE", "TCS"]
-    assert config.scheduler.jobs[4].type == "strategy_calibration"
-    assert not config.scheduler.jobs[4].critical
+    assert config.scheduler.jobs[3].type == "broker_reconciliation"
+    assert config.scheduler.jobs[3].critical
+    assert config.scheduler.jobs[5].type == "strategy_calibration"
+    assert not config.scheduler.jobs[5].critical
 
 
 def test_deployment_config_rejects_live_mode_when_live_is_disabled(tmp_path):

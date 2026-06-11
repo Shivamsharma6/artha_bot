@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ArthaBot Monitor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <header class="header">
+      <div class="brand-title">
+          <h1>ArthaBot <span id="system-mode" class="mode-badge paper">PAPER</span></h1>
+      </div>
+      <div class="metrics">
+          <div class="metric">
+              <span class="label">Total Capital</span>
+              <span class="value" id="capital-value">₹5,000.00</span>
+          </div>
+          <div class="metric">
+              <span class="label">Today's P&L</span>
+              <span class="value" id="pnl-value">₹0.00</span>
+          </div>
+          <div class="metric">
+              <span class="label">Win Rate</span>
+              <span class="value" id="win-rate-value">0%</span>
+          </div>
+          <div class="metric">
+              <span class="label">Total Trades</span>
+              <span class="value" id="total-trades-value">0</span>
+          </div>
+          <div class="metric">
+              <span class="label">Open Pos.</span>
+              <span class="value" id="positions-count">0</span>
+          </div>
+      </div>
+      <div id="connection-status" class="status disconnected">Disconnected</div>
+    </header>
+    <main class="grid">
+      <section class="positions">
+        <h2>Active Positions</h2>
+        <div id="positions-list" class="placeholder-text">No active positions</div>
+      </section>
+      <section class="system-logs">
+        <h2>System Feed</h2>
+        <ul id="log-list"></ul>
+      </section>
+    </main>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

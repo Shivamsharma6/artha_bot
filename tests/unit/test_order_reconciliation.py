@@ -68,3 +68,12 @@ def test_order_reconciliation_fails_closed_on_fill_mismatch():
     assert result.reason_code == "FILL_MISMATCH"
     assert result.must_stop_trading
 
+
+def test_order_reconciliation_fails_closed_on_unexpected_broker_order():
+    result = OrderReconciliationService().reconcile(
+        broker_orders=[BrokerOrderState("external-o1", "INFY", "OPEN", 0)],
+        internal_orders=[],
+    )
+
+    assert result.reason_code == "UNEXPECTED_BROKER_ORDER"
+    assert result.must_stop_trading

@@ -27,13 +27,11 @@ class SecretConfig:
 
     @property
     def has_zerodha_credentials(self) -> bool:
-        return all(
-            [
-                self.zerodha_api_key,
-                self.zerodha_api_secret,
-                self.zerodha_access_token,
-            ]
-        )
+        return self.has_zerodha_api_credentials and bool(self.zerodha_access_token)
+
+    @property
+    def has_zerodha_api_credentials(self) -> bool:
+        return bool(self.zerodha_api_key and self.zerodha_api_secret)
 
     def __repr__(self) -> str:
         return (

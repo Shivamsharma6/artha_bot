@@ -53,6 +53,8 @@ def main(argv: list[str] | None = None) -> int:
     payload = {
         "ready": result.ready,
         "reason_codes": list(result.reason_codes),
+        "local_reason_codes": list(result.local_reason_codes),
+        "external_reason_codes": list(result.external_reason_codes),
         "checks": [
             {"name": check.name, "passed": check.passed, "reason_code": check.reason_code}
             for check in result.checks
@@ -68,6 +70,8 @@ def main(argv: list[str] | None = None) -> int:
         payload={
             "ready": result.ready,
             "reason_codes": list(result.reason_codes),
+            "local_reason_codes": list(result.local_reason_codes),
+            "external_reason_codes": list(result.external_reason_codes),
             "mode": "PAPER",
             "live_enabled": False,
         },
@@ -77,4 +81,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

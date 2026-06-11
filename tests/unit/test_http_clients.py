@@ -14,7 +14,9 @@ from arthabot.http_clients import (
     build_historical_http_client,
     build_news_http_client,
     build_zerodha_http_client,
+    build_zerodha_gateway,
 )
+from arthabot.broker_gateway import ZerodhaGateway
 from arthabot.secrets import SecretConfig
 
 
@@ -77,6 +79,24 @@ def test_zerodha_http_client_builds_authorized_order_request_without_logging_sec
     assert seen[0].path == "/orders/regular"
     assert seen[0].headers["Authorization"] == "token key:token"
     assert "secret" not in repr(seen[0])
+
+
+def test_zerodha_http_client_normalizes_kite_order_envelope():
+    client = ZerodhaHttpClient(
+        secret_config=SecretConfig(
+            zerodha_api_key="key",
+            zerodha_api_secret="secret",
+            zerodha_access_token="token",
+        ),
+        transport=lambda request: {"status": "success", "data": {"order_id": "kite-123"}},
+    )
+
+    response = client.place_order(
+        BrokerOrderRequest(symbol="INFY", direction=Direction.LONG, quantity=1, price=Decimal("100"))
+    )
+
+    assert response.order_id == "kite-123"
+    assert response.status == "SUBMITTED"
 
 
 def test_zerodha_http_client_builds_modify_order_request():
@@ -156,6 +176,42 @@ def test_zerodha_http_client_fetches_equity_margin_live_balance():
     assert balance == {"available_cash": "4998.75"}
     assert seen[0].method == "GET"
     assert seen[0].path == "/user/margins/equity"
+
+
+def test_zerodha_http_client_fetches_and_normalizes_orders_and_net_positions():
+    seen = []
+
+    def transport(request):
+        seen.append(request)
+        if request.path == "/orders":
+            return {
+                "status": "success",
+                "data": [{"order_id": "o1", "tradingsymbol": "INFY", "status": "COMPLETE", "filled_quantity": 2}],
+            }
+        return {
+            "status": "success",
+            "data": {"net": [{"tradingsymbol": "INFY", "quantity": -2, "product": "MIS"}]},
+        }
+
+    client = ZerodhaHttpClient(
+        secret_config=SecretConfig(
+            zerodha_api_key="key",
+            zerodha_api_secret="secret",
+            zerodha_access_token="token",
+        ),
+        transport=transport,
+    )
+
+    orders = client.fetch_orders()
+    positions = client.fetch_positions()
+
+    assert orders[0].order_id == "o1"
+    assert orders[0].symbol == "INFY"
+    assert orders[0].filled_quantity == 2
+    assert positions[0].symbol == "INFY"
+    assert positions[0].direction == Direction.SHORT
+    assert positions[0].quantity == 2
+    assert [request.path for request in seen] == ["/orders", "/portfolio/positions"]
     assert seen[0].headers["X-Kite-Version"] == "3"
 
 
@@ -214,6 +270,39 @@ def test_zerodha_http_client_fetches_and_parses_instruments_csv():
             "exchange": "NSE",
         }
     ]
+
+
+def test_zerodha_http_client_fetches_quotes():
+    seen: list[HttpRequest] = []
+
+    def fake_transport(request: HttpRequest):
+        seen.append(request)
+        return {
+            "status": "success",
+            "data": {
+                "NSE:INFY": {"last_price": 1000},
+                "NSE:TCS": {"last_price": 2000},
+            }
+        }
+
+    client = ZerodhaHttpClient(
+        secret_config=SecretConfig(
+            zerodha_api_key="key",
+            zerodha_api_secret="secret",
+            zerodha_access_token="token",
+        ),
+        transport=fake_transport,
+    )
+
+    quotes = client.fetch_quotes(symbols=["NSE:INFY", "NSE:TCS"])
+
+    assert seen[0].method == "GET"
+    assert seen[0].path == "/quote"
+    assert seen[0].query == {"i": ["NSE:INFY", "NSE:TCS"]}
+    assert quotes == {
+        "NSE:INFY": {"last_price": 1000},
+        "NSE:TCS": {"last_price": 2000},
+    }
 
 
 def test_historical_http_client_builds_request_and_normalizes_rows():
@@ -450,3 +539,4 @@ def test_http_client_factories_wire_production_transport_boundaries():
     assert isinstance(build_zerodha_http_client(secret_config=secrets), ZerodhaHttpClient)
     assert isinstance(build_historical_http_client(base_url="https://history.example.test"), HistoricalHttpClient)
     assert isinstance(build_news_http_client(secret_config=secrets, base_url="https://news.example.test"), NewsHttpClient)
+    assert isinstance(build_zerodha_gateway(secret_config=secrets), ZerodhaGateway)

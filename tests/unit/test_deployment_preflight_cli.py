@@ -79,5 +79,6 @@ def test_deployment_preflight_cli_returns_nonzero_for_missing_access_token(tmp_p
 
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert exit_code == 1
-    assert "ZERODHA_CREDENTIALS_MISSING" in payload["reason_codes"]
+    assert payload["external_reason_codes"] == ["KITE_ACCESS_TOKEN_MISSING"]
     assert "LIVE_FEED_HANDLER_MISSING" in payload["reason_codes"]
+    assert "LIVE_FEED_HANDLER_MISSING" in payload["local_reason_codes"]

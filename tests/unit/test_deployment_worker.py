@@ -50,6 +50,32 @@ def test_deployment_worker_runs_enabled_configured_jobs_and_skips_disabled_jobs(
     assert audit.read_all()[-1].event_type == "deployment_scheduler_tick_completed"
 
 
+def test_deployment_worker_evaluates_schedule_in_configured_timezone(tmp_path):
+    calls = []
+    registry = DeploymentJobRegistry(
+        factories={
+            "live_feed_supervision": lambda config: ScheduledJob(
+                name=config.name,
+                schedule=TimeOfDaySchedule.from_string(config.run_at),
+                action=lambda now: calls.append(now),
+                critical=True,
+            )
+        }
+    )
+    worker = DeploymentSchedulerWorker(
+        audit=JsonlAuditStore(tmp_path / "audit.jsonl"),
+        registry=registry,
+        job_configs=[DeploymentJobConfig("feed", "live_feed_supervision", True, True, "09:00")],
+        timezone_name="Asia/Kolkata",
+    )
+
+    result = worker.tick(now=datetime(2026, 1, 5, 3, 30, tzinfo=timezone.utc))
+
+    assert result.job_results[0].executed is True
+    assert calls[0].hour == 9
+    assert calls[0].utcoffset().total_seconds() == 19800
+
+
 def test_deployment_worker_fails_closed_when_critical_job_fails(tmp_path):
     audit = JsonlAuditStore(tmp_path / "audit.jsonl")
     registry = DeploymentJobRegistry(
@@ -117,6 +143,7 @@ def test_deployment_worker_builds_all_enabled_jobs_from_default_deployment_confi
                 "live_feed_supervision",
                 "learning_rerun",
                 "strategy_calibration",
+                "broker_reconciliation",
             }
         }
     )
@@ -132,6 +159,7 @@ def test_deployment_worker_builds_all_enabled_jobs_from_default_deployment_confi
         "instrument-refresh-nse",
         "news-ingest-core-watchlist",
         "live-feed-supervision",
+        "broker-state-reconciliation",
         "operational-learning-rerun",
         "strategy-calibration-rerun",
     ]
@@ -139,6 +167,7 @@ def test_deployment_worker_builds_all_enabled_jobs_from_default_deployment_confi
         "instrument-refresh-nse",
         "news-ingest-core-watchlist",
         "live-feed-supervision",
+        "broker-state-reconciliation",
         "operational-learning-rerun",
         "strategy-calibration-rerun",
     ]

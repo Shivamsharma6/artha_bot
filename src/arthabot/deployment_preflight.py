@@ -46,6 +46,8 @@ class DeploymentPreflightCheck:
 class DeploymentPreflightResult:
     ready: bool
     reason_codes: tuple[str, ...]
+    local_reason_codes: tuple[str, ...]
+    external_reason_codes: tuple[str, ...]
     checks: tuple[DeploymentPreflightCheck, ...]
 
 
@@ -66,9 +68,14 @@ class DeploymentPreflight:
             ),
             self._check("leverage_disabled", not request.runtime.risk.leverage_allowed, "LEVERAGE_ENABLED"),
             self._check(
-                "zerodha_credentials",
-                request.secrets.has_zerodha_credentials,
-                "ZERODHA_CREDENTIALS_MISSING",
+                "zerodha_api_credentials",
+                request.secrets.has_zerodha_api_credentials,
+                "ZERODHA_API_CREDENTIALS_MISSING",
+            ),
+            self._check(
+                "kite_access_token",
+                bool(request.secrets.zerodha_access_token),
+                "KITE_ACCESS_TOKEN_MISSING",
             ),
             self._check("news_api_key", bool(request.secrets.news_api_key), "NEWS_API_KEY_MISSING"),
             self._check(
@@ -119,9 +126,16 @@ class DeploymentPreflight:
             ]
         )
         reason_codes = tuple(check.reason_code for check in checks if not check.passed)
+        external_codes = {
+            "ZERODHA_API_CREDENTIALS_MISSING",
+            "KITE_ACCESS_TOKEN_MISSING",
+            "NEWS_API_KEY_MISSING",
+        }
         return DeploymentPreflightResult(
             ready=not reason_codes,
             reason_codes=reason_codes,
+            local_reason_codes=tuple(code for code in reason_codes if code not in external_codes),
+            external_reason_codes=tuple(code for code in reason_codes if code in external_codes),
             checks=tuple(checks),
         )
 

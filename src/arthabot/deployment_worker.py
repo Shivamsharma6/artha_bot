@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from arthabot.audit_store import JsonlAuditStore
 from arthabot.deployment_config import DeploymentJobConfig
@@ -34,13 +35,18 @@ class DeploymentSchedulerWorker:
         audit: JsonlAuditStore,
         registry: DeploymentJobRegistry,
         job_configs: list[DeploymentJobConfig],
+        timezone_name: str = "UTC",
     ) -> None:
         self.audit = audit
         self.runner = SchedulerRunner(audit=audit)
+        self.timezone = ZoneInfo(timezone_name)
         self.jobs = [registry.build(config) for config in job_configs if config.enabled]
 
     def tick(self, *, now: datetime) -> DeploymentSchedulerTickResult:
-        job_results = [self.runner.run(job, now=now) for job in self.jobs]
+        if now.tzinfo is None:
+            raise ValueError("deployment scheduler clock must be timezone-aware")
+        local_now = now.astimezone(self.timezone)
+        job_results = [self.runner.run(job, now=local_now) for job in self.jobs]
         stop_result = next((result for result in job_results if result.must_stop_trading), None)
         if stop_result is not None:
             self.audit.append(

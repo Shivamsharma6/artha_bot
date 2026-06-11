@@ -16,8 +16,12 @@ from arthabot.broker_gateway import (
     BrokerModifyRequest,
     BrokerOrderRequest,
     BrokerOrderResponse,
+    ZerodhaGateway,
 )
 from arthabot.secrets import SecretConfig
+from arthabot.common import Direction
+from arthabot.order_reconciliation import BrokerOrderState
+from arthabot.reconciliation import BrokerPosition
 
 
 SENSITIVE_HEADERS = {"authorization", "x-api-key"}
@@ -28,7 +32,7 @@ class HttpRequest:
     method: str
     path: str
     headers: dict[str, str] = field(default_factory=dict)
-    query: dict[str, str] = field(default_factory=dict)
+    query: dict[str, Any] = field(default_factory=dict)
     json: dict[str, Any] | None = None
 
     def __repr__(self) -> str:
@@ -66,7 +70,7 @@ class UrllibHttpTransport:
     def __call__(self, request: HttpRequest) -> Any:
         url = urljoin(self.base_url, request.path.lstrip("/"))
         if request.query:
-            url = f"{url}?{urlencode(request.query)}"
+            url = f"{url}?{urlencode(request.query, doseq=True)}"
 
         headers = dict(request.headers)
         body: bytes | None = None
@@ -89,7 +93,11 @@ class UrllibHttpTransport:
             raise RuntimeError(f"HTTP {status} for {request.method.upper()} {request.path}")
         if not raw_body:
             return {}
-        return json.loads(raw_body.decode("utf-8"))
+        decoded = raw_body.decode("utf-8")
+        try:
+            return json.loads(decoded)
+        except Exception:
+            return decoded
 
 
 class ZerodhaHttpClient:
@@ -115,11 +123,7 @@ class ZerodhaHttpClient:
                 },
             )
         )
-        return BrokerOrderResponse(
-            order_id=str(raw["order_id"]),
-            status=str(raw["status"]),
-            raw=dict(raw),
-        )
+        return self._order_response(raw, default_status="SUBMITTED")
 
     def modify_order(self, order: BrokerModifyRequest, *, variety: str = "regular") -> BrokerOrderResponse:
         if not self.secret_config.has_zerodha_credentials:
@@ -135,11 +139,7 @@ class ZerodhaHttpClient:
                 },
             )
         )
-        return BrokerOrderResponse(
-            order_id=str(raw["order_id"]),
-            status=str(raw["status"]),
-            raw=dict(raw),
-        )
+        return self._order_response(raw, default_status="MODIFIED")
 
     def cancel_order(self, order: BrokerCancelRequest, *, variety: str = "regular") -> BrokerOrderResponse:
         if not self.secret_config.has_zerodha_credentials:
@@ -151,10 +151,22 @@ class ZerodhaHttpClient:
                 headers=self._headers(),
             )
         )
+        return self._order_response(raw, default_status="CANCELLED")
+
+    @staticmethod
+    def _order_response(raw: Any, *, default_status: str) -> BrokerOrderResponse:
+        payload = dict(raw)
+        data = dict(payload.get("data") or {})
+        order_id = data.get("order_id", payload.get("order_id"))
+        if not order_id:
+            raise RuntimeError("Zerodha order response did not include an order_id")
+        status = data.get("status") or payload.get("order_status")
+        if status is None and payload.get("status") not in {None, "success"}:
+            status = payload["status"]
         return BrokerOrderResponse(
-            order_id=str(raw["order_id"]),
-            status=str(raw["status"]),
-            raw=dict(raw),
+            order_id=str(order_id),
+            status=str(status or default_status),
+            raw=payload,
         )
 
     def fetch_margin_balance(self, *, segment: str = "equity") -> dict[str, str]:
@@ -172,6 +184,47 @@ class ZerodhaHttpClient:
             raise ValueError("Zerodha margin response missing available.live_balance")
         return {"available_cash": str(available["live_balance"])}
 
+    def fetch_orders(self) -> list[BrokerOrderState]:
+        self._require_credentials()
+        raw = self.transport(HttpRequest(method="GET", path="/orders", headers=self._headers()))
+        rows = raw.get("data") or []
+        if not isinstance(rows, list):
+            raise RuntimeError("Zerodha orders response data must be a list")
+        return [
+            BrokerOrderState(
+                order_id=str(row["order_id"]),
+                symbol=str(row["tradingsymbol"]),
+                status=str(row["status"]),
+                filled_quantity=int(row.get("filled_quantity", 0)),
+            )
+            for row in rows
+        ]
+
+    def fetch_positions(self) -> list[BrokerPosition]:
+        self._require_credentials()
+        raw = self.transport(HttpRequest(method="GET", path="/portfolio/positions", headers=self._headers()))
+        data = raw.get("data") or {}
+        rows = data.get("net") or []
+        if not isinstance(rows, list):
+            raise RuntimeError("Zerodha positions response net data must be a list")
+        positions: list[BrokerPosition] = []
+        for row in rows:
+            quantity = int(row.get("quantity", 0))
+            if quantity == 0 or str(row.get("product", "")) != "MIS":
+                continue
+            positions.append(
+                BrokerPosition(
+                    symbol=str(row["tradingsymbol"]),
+                    quantity=abs(quantity),
+                    direction=Direction.LONG if quantity > 0 else Direction.SHORT,
+                )
+            )
+        return positions
+
+    def _require_credentials(self) -> None:
+        if not self.secret_config.has_zerodha_credentials:
+            raise PermissionError("Zerodha credentials are required")
+
     def fetch_instruments(self, *, exchange: str | None = None) -> list[dict[str, str]]:
         if not self.secret_config.has_zerodha_credentials:
             raise PermissionError("Zerodha credentials are required")
@@ -185,6 +238,23 @@ class ZerodhaHttpClient:
         if not isinstance(raw, str):
             raise ValueError("Zerodha instruments response must be CSV text")
         return list(csv.DictReader(StringIO(raw)))
+
+    def fetch_quotes(self, symbols: list[str]) -> dict[str, Any]:
+        if not self.secret_config.has_zerodha_credentials:
+            raise PermissionError("Zerodha credentials are required")
+        if not symbols:
+            return {}
+        raw = self.transport(
+            HttpRequest(
+                method="GET",
+                path="/quote",
+                headers=self._headers(),
+                query={"i": symbols},
+            )
+        )
+        if isinstance(raw, dict) and "data" in raw:
+            return dict(raw["data"])
+        return dict(raw)
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -341,6 +411,25 @@ def build_zerodha_http_client(
     return ZerodhaHttpClient(
         secret_config=secret_config,
         transport=UrllibHttpTransport(base_url=base_url, timeout_seconds=timeout_seconds),
+    )
+
+
+def build_zerodha_gateway(
+    *,
+    secret_config: SecretConfig,
+    base_url: str = "https://api.kite.trade",
+    timeout_seconds: float = 3.0,
+) -> ZerodhaGateway:
+    client = build_zerodha_http_client(
+        secret_config=secret_config,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+    )
+    return ZerodhaGateway(
+        secret_config=secret_config,
+        submit_order=client.place_order,
+        modify_order=client.modify_order,
+        cancel_order=client.cancel_order,
     )
 
 

@@ -26,6 +26,24 @@ def test_scheduler_runner_executes_due_job_and_audits_result(tmp_path):
     assert audit.read_all()[0].event_type == "scheduled_job_completed"
 
 
+def test_scheduler_runner_does_not_repeat_job_on_later_tick_same_day(tmp_path):
+    calls = []
+    runner = SchedulerRunner(audit=JsonlAuditStore(tmp_path / "audit.jsonl"))
+    job = ScheduledJob(
+        name="live-feed",
+        schedule=TimeOfDaySchedule(run_at=time(9, 0)),
+        action=lambda now: calls.append(now),
+        critical=True,
+    )
+
+    first = runner.run(job, now=datetime(2026, 1, 5, 9, 0, tzinfo=timezone.utc))
+    second = runner.run(job, now=datetime(2026, 1, 5, 9, 1, tzinfo=timezone.utc))
+
+    assert first.executed is True
+    assert second.executed is False
+    assert calls == [datetime(2026, 1, 5, 9, 0, tzinfo=timezone.utc)]
+
+
 def test_scheduler_runner_skips_job_before_scheduled_time_and_audits(tmp_path):
     audit = JsonlAuditStore(tmp_path / "audit.jsonl")
     runner = SchedulerRunner(audit=audit)

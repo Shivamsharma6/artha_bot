@@ -11,7 +11,16 @@ from arthabot.broker_gateway import (
 )
 from arthabot.common import Direction
 from arthabot.audit_store import JsonlAuditStore
-from arthabot.live_feed import FeedReconnectController, LiveFeedMonitor, LiveFeedSupervisor, Tick, ZerodhaWebSocketFeedClient
+from arthabot.live_feed import (
+    FeedReconnectController,
+    LiveFeedMonitor,
+    LiveFeedSupervisor,
+    Tick,
+    ZerodhaLiveFeedSchedulerHandler,
+    ZerodhaWebSocketFeedClient,
+)
+from arthabot.instruments import InstrumentTokenRecord, InstrumentTokenStore
+from arthabot.broker_order_updates import BrokerOrderUpdateResult
 from arthabot.secrets import SecretConfig
 
 
@@ -85,6 +94,7 @@ class FakeTicker:
         self.connected = False
         self.on_ticks = None
         self.on_connect = None
+        self.on_order_update = None
 
     def subscribe(self, tokens: list[int]) -> None:
         self.subscribed_tokens.extend(tokens)
@@ -147,6 +157,25 @@ def test_zerodha_websocket_feed_subscribes_and_records_ticks():
         volume=2000,
         timestamp=now,
     )
+
+
+def test_zerodha_websocket_feed_forwards_order_updates_and_tracks_stop_state():
+    ticker = FakeTicker()
+    updates = []
+    client = ZerodhaWebSocketFeedClient(
+        secret_config=SecretConfig("key", "secret", "token"),
+        monitor=LiveFeedMonitor(max_tick_age_seconds=3),
+        ticker_factory=lambda api_key, access_token: ticker,
+        token_to_symbol={123: "INFY"},
+        order_update_handler=lambda update: updates.append(update)
+        or BrokerOrderUpdateResult(False, "PARTIAL_FILL_UNSUPPORTED", True),
+    )
+
+    client.connect(tokens=[123])
+    ticker.on_order_update(ticker, {"order_id": "o1"})
+
+    assert updates == [{"order_id": "o1"}]
+    assert client.last_order_update_result.must_stop_trading is True
 
 
 def test_zerodha_websocket_feed_rejects_unmapped_tick_token():
@@ -277,3 +306,64 @@ def test_live_feed_supervisor_fails_closed_when_reconnect_budget_exhausted(tmp_p
     assert decision.must_stop_trading
     assert decision.reason_code == "LIVE_FEED_UNSTABLE"
     assert audit.read_all()[-1].event_type == "live_feed_failed_closed"
+
+
+def test_live_feed_scheduler_handler_connects_same_day_configured_symbols(tmp_path):
+    store = InstrumentTokenStore(tmp_path / "instruments.json")
+    store.save(
+        exchange="NSE",
+        as_of=datetime(2026, 1, 5).date(),
+        records=[
+            InstrumentTokenRecord(408065, "INFY", "NSE", "NSE", "EQ", "INFOSYS", datetime(2026, 1, 5).date()),
+            InstrumentTokenRecord(2953217, "TCS", "NSE", "NSE", "EQ", "TCS", datetime(2026, 1, 5).date()),
+        ],
+    )
+    ticker = FakeTicker()
+    handler = ZerodhaLiveFeedSchedulerHandler(
+        secret_config=SecretConfig(
+            zerodha_api_key="key",
+            zerodha_api_secret="secret",
+            zerodha_access_token="token",
+        ),
+        instrument_store=store,
+        symbols=("INFY", "TCS"),
+        audit=JsonlAuditStore(tmp_path / "feed.audit.jsonl"),
+        ticker_factory=lambda api_key, access_token: ticker,
+        market_timezone="Asia/Kolkata",
+    )
+
+    payload = handler(datetime(2026, 1, 5, 3, 30, tzinfo=timezone.utc))
+
+    assert payload["reason_code"] == "LIVE_FEED_CONNECTED"
+    assert payload["must_stop_trading"] is False
+    assert payload["symbols"] == ["INFY", "TCS"]
+    assert ticker.subscribed_tokens == [408065, 2953217]
+
+
+def test_live_feed_scheduler_handler_fails_before_connect_when_symbol_token_is_missing(tmp_path):
+    store = InstrumentTokenStore(tmp_path / "instruments.json")
+    store.save(
+        exchange="NSE",
+        as_of=datetime(2026, 1, 5).date(),
+        records=[
+            InstrumentTokenRecord(408065, "INFY", "NSE", "NSE", "EQ", "INFOSYS", datetime(2026, 1, 5).date()),
+        ],
+    )
+    ticker_calls = []
+    handler = ZerodhaLiveFeedSchedulerHandler(
+        secret_config=SecretConfig(
+            zerodha_api_key="key",
+            zerodha_api_secret="secret",
+            zerodha_access_token="token",
+        ),
+        instrument_store=store,
+        symbols=("INFY", "TCS"),
+        audit=JsonlAuditStore(tmp_path / "feed.audit.jsonl"),
+        ticker_factory=lambda api_key, access_token: ticker_calls.append((api_key, access_token)),
+        market_timezone="Asia/Kolkata",
+    )
+
+    with pytest.raises(KeyError, match="missing instrument token for NSE:TCS"):
+        handler(datetime(2026, 1, 5, 3, 30, tzinfo=timezone.utc))
+
+    assert ticker_calls == []

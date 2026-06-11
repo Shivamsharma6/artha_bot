@@ -26,6 +26,7 @@ def build_paper_deployment_service(
     live_feed_supervision: Callable[[datetime], object],
     learning_rerun: Callable[[datetime], object],
     strategy_calibration: Callable[[datetime], object],
+    broker_reconciliation: Callable[[datetime], object],
     interval_seconds: int = 60,
     zerodha_transport: Transport | None = None,
     news_transport: Transport | None = None,
@@ -63,6 +64,7 @@ def build_paper_deployment_service(
             live_feed_supervision=live_feed_supervision,
             learning_rerun=learning_rerun,
             strategy_calibration=strategy_calibration,
+            broker_reconciliation=broker_reconciliation,
             news_query_builder=NewsQueryBuilder(company_terms=news_curation.company_terms),
             news_curation=news_curation,
         )
@@ -71,6 +73,7 @@ def build_paper_deployment_service(
         audit=audit,
         registry=registry,
         job_configs=deployment.scheduler.jobs,
+        timezone_name=deployment.scheduler.timezone,
     )
     return DeploymentSchedulerService(
         worker=worker,

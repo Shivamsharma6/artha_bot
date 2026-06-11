@@ -23,6 +23,11 @@ scheduler:
       enabled: true
       critical: true
       run_at: "09:00"
+    - name: "broker-state-reconciliation"
+      type: "broker_reconciliation"
+      enabled: true
+      critical: true
+      run_at: "09:05"
     - name: "operational-learning-rerun"
       type: "learning_rerun"
       enabled: true

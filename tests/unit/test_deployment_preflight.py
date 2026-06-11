@@ -44,6 +44,8 @@ def test_deployment_preflight_accepts_complete_paper_evidence(tmp_path):
 
     assert result.ready is True
     assert result.reason_codes == ()
+    assert result.local_reason_codes == ()
+    assert result.external_reason_codes == ()
     assert all(check.passed for check in result.checks)
 
 
@@ -67,11 +69,43 @@ def test_deployment_preflight_reports_missing_credentials_and_handlers(tmp_path)
     result = DeploymentPreflight().evaluate(request)
 
     assert result.ready is False
-    assert "ZERODHA_CREDENTIALS_MISSING" in result.reason_codes
+    assert "ZERODHA_API_CREDENTIALS_MISSING" in result.reason_codes
+    assert "KITE_ACCESS_TOKEN_MISSING" in result.reason_codes
     assert "NEWS_API_KEY_MISSING" in result.reason_codes
     assert "LIVE_FEED_HANDLER_MISSING" in result.reason_codes
     assert "LEARNING_RERUN_HANDLER_MISSING" in result.reason_codes
     assert "CALIBRATION_HANDLER_MISSING" in result.reason_codes
+    assert result.external_reason_codes == (
+        "ZERODHA_API_CREDENTIALS_MISSING",
+        "KITE_ACCESS_TOKEN_MISSING",
+        "NEWS_API_KEY_MISSING",
+    )
+    assert "LIVE_FEED_HANDLER_MISSING" in result.local_reason_codes
+    assert "LEARNING_RERUN_HANDLER_MISSING" in result.local_reason_codes
+    assert "CALIBRATION_HANDLER_MISSING" in result.local_reason_codes
+
+
+def test_deployment_preflight_reports_access_token_as_external_blocker(tmp_path):
+    request = _request(tmp_path)
+    request = DeploymentPreflightRequest(
+        deployment=request.deployment,
+        runtime=request.runtime,
+        secrets=SecretConfig(
+            zerodha_api_key="set",
+            zerodha_api_secret="set",
+            news_api_key="set",
+        ),
+        handlers=request.handlers,
+        audit_path=request.audit_path,
+        instrument_store_path=request.instrument_store_path,
+        sensitive_files=request.sensitive_files,
+        ssh_key_path=request.ssh_key_path,
+    )
+
+    result = DeploymentPreflight().evaluate(request)
+
+    assert result.external_reason_codes == ("KITE_ACCESS_TOKEN_MISSING",)
+    assert result.local_reason_codes == ()
 
 
 def test_deployment_preflight_rejects_unsafe_sensitive_and_ssh_permissions(tmp_path):

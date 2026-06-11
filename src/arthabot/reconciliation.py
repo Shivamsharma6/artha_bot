@@ -23,6 +23,7 @@ class InternalPosition:
     symbol: str
     quantity: int
     direction: Direction
+    entry_price: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -62,4 +63,3 @@ class ReconciliationService:
             key = (position.symbol, position.direction)
             totals[key] = totals.get(key, 0) + position.quantity
         return totals
-

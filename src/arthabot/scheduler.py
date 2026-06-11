@@ -46,9 +46,11 @@ class ScheduledJobResult:
 class SchedulerRunner:
     def __init__(self, *, audit: JsonlAuditStore) -> None:
         self.audit = audit
+        self._last_run_at: dict[str, datetime] = {}
 
     def run(self, job: ScheduledJob, *, now: datetime) -> ScheduledJobResult:
-        if not job.schedule.is_due(now=now, last_run_at=job.last_run_at):
+        last_run_at = self._last_run_at.get(job.name, job.last_run_at)
+        if not job.schedule.is_due(now=now, last_run_at=last_run_at):
             self.audit.append(
                 event_type="scheduled_job_skipped",
                 payload={"job_name": job.name, "reason_code": "SCHEDULE_NOT_DUE"},
@@ -60,6 +62,7 @@ class SchedulerRunner:
                 reason_code="SCHEDULE_NOT_DUE",
             )
 
+        self._last_run_at[job.name] = now
         try:
             payload = job.action(now)
         except Exception as exc:

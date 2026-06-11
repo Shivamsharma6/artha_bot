@@ -29,6 +29,7 @@ class DeploymentRegistryDependencies:
     live_feed_supervision: OperationalHandler
     learning_rerun: OperationalHandler
     strategy_calibration: OperationalHandler | None = None
+    broker_reconciliation: OperationalHandler | None = None
     exchange: str = "NSE"
     news_query_builder: NewsQueryBuilder | None = None
     news_curation: NewsCurationConfig | None = None
@@ -60,6 +61,10 @@ def build_provider_job_registry(dependencies: DeploymentRegistryDependencies) ->
                     dependencies.strategy_calibration,
                     "strategy_calibration",
                 ),
+            ),
+            "broker_reconciliation": lambda config: _build_handler_job(
+                config=config,
+                handler=_require_handler(dependencies.broker_reconciliation, "broker_reconciliation"),
             ),
         }
     )

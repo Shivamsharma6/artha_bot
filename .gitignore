@@ -12,3 +12,4 @@ KiteAppDetails.txt
 *.pem
 logs/*.jsonl
 reports/*.json
+.superpowers/brainstorm/

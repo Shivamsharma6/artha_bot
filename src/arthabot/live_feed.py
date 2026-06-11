@@ -5,8 +5,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from arthabot.audit_store import JsonlAuditStore
+from arthabot.instruments import InstrumentTokenStore
 from arthabot.secrets import SecretConfig
 
 
@@ -170,6 +172,7 @@ class ZerodhaWebSocketFeedClient:
         monitor: LiveFeedMonitor,
         ticker_factory: TickerFactory,
         token_to_symbol: dict[int, str],
+        order_update_handler: Callable[[dict[str, Any]], Any] | None = None,
     ) -> None:
         if not secret_config.has_zerodha_credentials:
             raise PermissionError("Zerodha credentials are required for live feed access")
@@ -177,6 +180,8 @@ class ZerodhaWebSocketFeedClient:
         self.monitor = monitor
         self.ticker_factory = ticker_factory
         self.token_to_symbol = dict(token_to_symbol)
+        self.order_update_handler = order_update_handler
+        self.last_order_update_result: Any | None = None
         self.ticker: Any | None = None
 
     def connect(self, *, tokens: list[int], threaded: bool = True) -> None:
@@ -188,6 +193,8 @@ class ZerodhaWebSocketFeedClient:
         )
         ticker.on_ticks = self._on_ticks
         ticker.on_connect = self._on_connect(tokens)
+        if self.order_update_handler is not None:
+            ticker.on_order_update = self._on_order_update
         self.ticker = ticker
         ticker.connect(threaded=threaded)
 
@@ -224,3 +231,74 @@ class ZerodhaWebSocketFeedClient:
                     timestamp=timestamp,
                 )
             )
+
+    def _on_order_update(self, ticker, update: dict[str, Any]) -> None:
+        if self.order_update_handler is None:
+            return
+        self.last_order_update_result = self.order_update_handler(update)
+
+
+class ZerodhaLiveFeedSchedulerHandler:
+    def __init__(
+        self,
+        *,
+        secret_config: SecretConfig,
+        instrument_store: InstrumentTokenStore,
+        symbols: tuple[str, ...],
+        audit: JsonlAuditStore,
+        ticker_factory: TickerFactory,
+        market_timezone: str,
+        exchange: str = "NSE",
+        max_tick_age_seconds: int = 3,
+        order_update_handler: Callable[[dict[str, Any]], Any] | None = None,
+    ) -> None:
+        if not symbols:
+            raise ValueError("at least one live-feed symbol is required")
+        self.secret_config = secret_config
+        self.instrument_store = instrument_store
+        self.symbols = symbols
+        self.audit = audit
+        self.ticker_factory = ticker_factory
+        self.market_timezone = ZoneInfo(market_timezone)
+        self.exchange = exchange
+        self.monitor = LiveFeedMonitor(max_tick_age_seconds=max_tick_age_seconds)
+        self.order_update_handler = order_update_handler
+        self.client: ZerodhaWebSocketFeedClient | None = None
+        self.supervisor: LiveFeedSupervisor | None = None
+
+    def __call__(self, now: datetime) -> dict[str, Any]:
+        market_now = now.astimezone(self.market_timezone)
+        records = self.instrument_store.load(exchange=self.exchange, as_of=market_now.date())
+        records_by_symbol = {record.tradingsymbol: record for record in records}
+        missing = next((symbol for symbol in self.symbols if symbol not in records_by_symbol), None)
+        if missing is not None:
+            raise KeyError(f"missing instrument token for {self.exchange}:{missing}")
+        token_to_symbol = {
+            records_by_symbol[symbol].instrument_token: symbol
+            for symbol in self.symbols
+        }
+        self.client = ZerodhaWebSocketFeedClient(
+            secret_config=self.secret_config,
+            monitor=self.monitor,
+            ticker_factory=self.ticker_factory,
+            token_to_symbol=token_to_symbol,
+            order_update_handler=self.order_update_handler,
+        )
+        self.supervisor = LiveFeedSupervisor(
+            feed_client=self.client,
+            reconnect_controller=FeedReconnectController(
+                base_delay_seconds=1,
+                max_delay_seconds=30,
+                max_failures=3,
+            ),
+            audit=self.audit,
+        )
+        decision = self.supervisor.connect(tokens=list(token_to_symbol), now=market_now)
+        return {
+            "reason_code": decision.reason_code,
+            "must_stop_trading": decision.must_stop_trading,
+            "should_reconnect": decision.should_reconnect,
+            "delay_seconds": decision.delay_seconds,
+            "symbols": list(self.symbols),
+            "timestamp": market_now.isoformat(),
+        }

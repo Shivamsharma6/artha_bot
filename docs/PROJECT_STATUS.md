@@ -278,10 +278,68 @@ Date: 2026-06-11
 * `scripts/check_deployment_preflight.py` writes only redacted check names and
   reason codes, audits the result, and returns non-zero when deployment is not
   ready. It never parses prose secret exports or invokes broker order endpoints.
-* Local deployment preflight currently fails closed because Zerodha/News
-  credentials are not loaded through environment variables and live-feed,
-  learning-rerun, and calibration handlers remain placeholders. No EC2 access or
-  deployment was attempted.
+* File-backed operational learning handler validates PAPER-only
+  `backtest.rerun.<version>` queue entries, delegates to the existing retrying
+  rerun worker, and atomically consumes work only after successful completion.
+* Historical reruns and scheduled calibration share the configured, cost-aware
+  historical backtest path and explicit JSON export provider. Calibration emits
+  scheduler summaries for promotable and rejected strategy versions.
+* Deployment scheduler composition now requires explicit learning queue and
+  historical export paths. Placeholder learning/calibration callbacks were
+  removed; unconfigured live-feed supervision fails closed.
+* Deployment now composes a real Zerodha KiteTicker PAPER feed handler from the
+  owner-only secret export or environment, same-day persisted NSE instrument
+  tokens, configured watchlist symbols, stale-tick monitor, reconnect controller,
+  and JSONL audit store. It does not place orders.
+* Scheduler ticks are converted to the configured `Asia/Kolkata` timezone before
+  due-time evaluation and handler invocation. Runner-owned execution state
+  prevents jobs from repeating on every service tick after their scheduled time.
+* Deployment CLI accepts `--secret-export-path` through the existing owner-only,
+  redacted secret importer, so credentials are never copied into configuration
+  or command output.
+* Execution engine now supports an explicitly enabled LIVE boundary only when a
+  credentialed `ZerodhaGateway` and persistent audit store are injected. It maps
+  approved intents to MIS limit orders, records successful broker order IDs and
+  statuses, audits failures, and never treats broker exceptions as submissions.
+* Zerodha HTTP order responses now normalize the real Kite
+  `status/data/order_id` envelope as well as test adapter responses. A production
+  gateway factory composes place, modify, and cancel adapters over the same
+  authenticated HTTP client without enabling LIVE mode by itself.
+* Zerodha HTTP client now fetches authoritative broker orders and MIS net
+  positions from `/orders` and `/portfolio/positions`, normalizing signed broker
+  quantities into explicit long/short position state.
+* Order reconciliation now rejects unexpected broker-side orders instead of
+  silently ignoring them. Combined broker reconciliation fetches balance,
+  orders, and positions, compares all three against internal state, audits a
+  complete match, and fails closed on provider errors or any mismatch.
+* Versioned internal trading snapshots persist available cash, internal orders,
+  positions, and timezone-aware update timestamps through atomic file
+  replacement. Missing, corrupt, stale, duplicate-order, or invalid snapshots
+  fail closed rather than being interpreted as an empty account.
+* A critical 09:05 IST broker reconciliation job now loads the durable snapshot,
+  enforces a five-minute freshness limit, and reconciles balance, orders, and
+  positions through the authenticated Kite client after feed startup.
+* Internal state transitions atomically record submitted orders, completed fills,
+  accumulated long/short positions, cancellations, partial/full position closes,
+  realized net P&L, and refreshed timestamps with strict identity and quantity
+  validation.
+* LIVE execution now requires the durable transition service. Broker acceptance
+  is persisted before success returns; a post-broker persistence failure emits
+  `live_order_state_uncertain`, records no local success, and raises immediately
+  so trading must stop and reconcile.
+* Zerodha WebSocket order updates now flow through an audited lifecycle
+  processor. Known full fills and terminal cancellations/rejections update the
+  durable snapshot automatically; duplicate terminal events are idempotent.
+  Unknown orders/states, symbol mismatches, malformed updates, and partial fills
+  fail closed instead of being approximated.
+* Deployment feed composition injects this processor into KiteTicker using the
+  same internal state path as scheduled reconciliation, so quote and order-event
+  streams share one restart-safe account view.
+* Deployment preflight separates locally closable and external blockers and
+  distinguishes Kite API key/secret evidence from the broker-issued access
+  token. Current local evidence has no remaining local blockers; only
+  `KITE_ACCESS_TOKEN_MISSING` remains externally. No EC2 access or deployment
+  was attempted.
 * Owner-only secret export importer recognizes exact Kite API key/secret,
   optional access-token, and NewsAPI labels, rejects duplicate/empty/unsafe
   inputs, and returns only the existing redacted `SecretConfig` in memory.
@@ -305,7 +363,7 @@ Command:
 Latest observed result:
 
 ```text
-264 passed in 0.43s
+310 passed in 0.78s
 ```
 
 ## Not Yet Complete
@@ -319,5 +377,10 @@ The full constitution is not complete yet. Remaining work includes:
   approval package are reviewed
 * PAPER EC2 deployment remains blocked until the deployment preflight passes;
   the current non-secret blockers are recorded above
+* Authoritative order-update ingestion is wired for entries and terminal order
+  states. Before LIVE promotion, the exit workflow must pair entry/exit fills,
+  calculate actual brokerage-adjusted realized P&L, and invoke position-close
+  transitions; partial-fill accounting must also be implemented or remain a
+  documented stop condition
 
 No live trading is implemented or enabled.

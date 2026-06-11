@@ -132,6 +132,7 @@ def test_paper_deployment_service_accepts_strategy_calibration_handler(tmp_path)
         live_feed_supervision=lambda now: {"feed": "ok"},
         learning_rerun=lambda now: {"learning": "ok"},
         strategy_calibration=lambda now: calls.append(("calibration", now.time())),
+        broker_reconciliation=lambda now: {"reconciled": True},
         zerodha_transport=FakeTransport(),
         news_transport=FakeTransport(),
         secret_config=SecretConfig(
@@ -147,4 +148,4 @@ def test_paper_deployment_service_accepts_strategy_calibration_handler(tmp_path)
     result = service.run(max_ticks=1)
 
     assert not result.must_stop_trading
-    assert calls == [("calibration", time(17, 0))]
+    assert calls == [("calibration", time(22, 30))]
