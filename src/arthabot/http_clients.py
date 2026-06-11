@@ -117,9 +117,9 @@ class ZerodhaHttpClient:
                     "tradingsymbol": order.symbol,
                     "transaction_type": "BUY" if order.direction.value == "long" else "SELL",
                     "quantity": order.quantity,
-                    "price": str(order.price),
                     "product": order.product,
                     "order_type": order.order_type,
+                    **({"price": str(order.price)} if order.order_type != "MARKET" else {}),
                 },
             )
         )

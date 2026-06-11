@@ -15,6 +15,7 @@ class DeploymentHandlerEvidence:
     live_feed_supervision: bool
     learning_rerun: bool
     strategy_calibration: bool
+    forced_square_off: bool = False
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,11 @@ class DeploymentPreflight:
                 "calibration_handler",
                 request.handlers.strategy_calibration,
                 "CALIBRATION_HANDLER_MISSING",
+            ),
+            self._check(
+                "forced_square_off_handler",
+                request.handlers.forced_square_off,
+                "FORCED_SQUARE_OFF_HANDLER_MISSING",
             ),
             self._check_path("audit_path", request.audit_path, "AUDIT_PATH_UNWRITABLE"),
             self._check_path(

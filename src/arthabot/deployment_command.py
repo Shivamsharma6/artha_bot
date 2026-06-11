@@ -27,6 +27,7 @@ def build_paper_deployment_service(
     learning_rerun: Callable[[datetime], object],
     strategy_calibration: Callable[[datetime], object],
     broker_reconciliation: Callable[[datetime], object],
+    forced_square_off: Callable[[datetime], object],
     interval_seconds: int = 60,
     zerodha_transport: Transport | None = None,
     news_transport: Transport | None = None,
@@ -65,6 +66,7 @@ def build_paper_deployment_service(
             learning_rerun=learning_rerun,
             strategy_calibration=strategy_calibration,
             broker_reconciliation=broker_reconciliation,
+            forced_square_off=forced_square_off,
             news_query_builder=NewsQueryBuilder(company_terms=news_curation.company_terms),
             news_curation=news_curation,
         )

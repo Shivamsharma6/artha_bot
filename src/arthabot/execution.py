@@ -86,6 +86,7 @@ class ExecutionEngine:
                 order_id=response.order_id,
                 symbol=intent.symbol,
                 quantity=intent.quantity,
+                transaction_type="BUY" if intent.direction == Direction.LONG else "SELL",
             )
         except Exception as exc:
             self.audit.append(

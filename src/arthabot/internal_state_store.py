@@ -20,7 +20,7 @@ class InternalTradingSnapshot:
 
 
 class InternalTradingStateStore:
-    VERSION = 2
+    VERSION = 3
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -37,6 +37,9 @@ class InternalTradingStateStore:
                     "symbol": order.symbol,
                     "status": order.status,
                     "expected_quantity": order.expected_quantity,
+                    "filled_quantity": order.filled_quantity,
+                    "average_fill_price": str(order.average_fill_price) if order.average_fill_price is not None else None,
+                    "transaction_type": order.transaction_type,
                 }
                 for order in snapshot.orders
             ],
@@ -62,7 +65,7 @@ class InternalTradingStateStore:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise ValueError("internal trading state snapshot is corrupt") from exc
-        if payload.get("version") not in {1, self.VERSION}:
+        if payload.get("version") not in {1, 2, self.VERSION}:
             raise ValueError("unsupported internal state version")
         try:
             snapshot = InternalTradingSnapshot(
@@ -74,6 +77,12 @@ class InternalTradingStateStore:
                         symbol=str(row["symbol"]),
                         status=str(row["status"]),
                         expected_quantity=int(row["expected_quantity"]),
+                        filled_quantity=int(row.get("filled_quantity", 0)),
+                        average_fill_price=(
+                            Decimal(str(row["average_fill_price"]))
+                            if row.get("average_fill_price") is not None else None
+                        ),
+                        transaction_type=(str(row["transaction_type"]) if row.get("transaction_type") else None),
                     )
                     for row in payload["orders"]
                 ),
@@ -103,6 +112,8 @@ class InternalTradingStateStore:
             raise ValueError("duplicate internal order id")
         if any(order.expected_quantity <= 0 for order in snapshot.orders):
             raise ValueError("internal order quantity must be positive")
+        if any(order.filled_quantity < 0 or order.filled_quantity > order.expected_quantity for order in snapshot.orders):
+            raise ValueError("internal order filled quantity is invalid")
         if any(position.quantity <= 0 for position in snapshot.positions):
             raise ValueError("internal position quantity must be positive")
 
@@ -112,14 +123,87 @@ class InternalTradingStateTransitions:
         self.store = store
         self.clock = clock or (lambda: datetime.now(timezone.utc))
 
-    def record_order_submitted(self, *, order_id: str, symbol: str, quantity: int) -> None:
+    def record_order_submitted(
+        self,
+        *,
+        order_id: str,
+        symbol: str,
+        quantity: int,
+        transaction_type: str | None = None,
+    ) -> None:
         snapshot = self.store.load()
         if any(order.order_id == order_id for order in snapshot.orders):
             raise ValueError("duplicate internal order id")
         self._save(
             snapshot,
-            orders=(*snapshot.orders, InternalOrderState(order_id, symbol, "OPEN", quantity)),
+            orders=(*snapshot.orders, InternalOrderState(
+                order_id, symbol, "OPEN", quantity,
+                transaction_type=transaction_type,
+            )),
         )
+
+    def record_fill_progress(
+        self,
+        *,
+        order_id: str,
+        cumulative_filled_quantity: int,
+        cumulative_average_price: Decimal,
+        direction: Direction,
+        realized_net_pnl: Decimal | None = None,
+    ) -> int:
+        snapshot = self.store.load()
+        order = next((item for item in snapshot.orders if item.order_id == order_id), None)
+        if order is None:
+            raise KeyError(f"missing internal order: {order_id}")
+        if cumulative_filled_quantity < order.filled_quantity:
+            raise ValueError("broker filled quantity moved backwards")
+        if cumulative_filled_quantity > order.expected_quantity:
+            raise ValueError("broker fill exceeds expected quantity")
+        delta = cumulative_filled_quantity - order.filled_quantity
+        if delta == 0:
+            return 0
+        prior_fill_value = (order.average_fill_price or Decimal("0")) * order.filled_quantity
+        delta_fill_price = (
+            cumulative_average_price * cumulative_filled_quantity - prior_fill_value
+        ) / delta
+        status = "COMPLETE" if cumulative_filled_quantity == order.expected_quantity else "OPEN"
+        updated_order = InternalOrderState(
+            order.order_id,
+            order.symbol,
+            status,
+            order.expected_quantity,
+            cumulative_filled_quantity,
+            cumulative_average_price,
+            order.transaction_type,
+        )
+        orders = tuple(updated_order if item.order_id == order_id else item for item in snapshot.orders)
+        opposing = next(
+            (position for position in snapshot.positions if position.symbol == order.symbol and position.direction != direction),
+            None,
+        )
+        positions = list(snapshot.positions)
+        available_cash = snapshot.available_cash
+        if opposing is not None:
+            if opposing.quantity < delta or opposing.entry_price is None or realized_net_pnl is None:
+                raise ValueError("exit fill cannot be reconciled with internal position")
+            positions.remove(opposing)
+            if opposing.quantity > delta:
+                positions.append(InternalPosition(order.symbol, opposing.quantity - delta, opposing.direction, opposing.entry_price))
+            available_cash += realized_net_pnl
+        else:
+            existing = next(
+                (position for position in positions if position.symbol == order.symbol and position.direction == direction),
+                None,
+            )
+            if existing is not None:
+                positions.remove(existing)
+                prior_value = (existing.entry_price or delta_fill_price) * existing.quantity
+                entry_price = (prior_value + delta_fill_price * delta) / (existing.quantity + delta)
+                positions.append(InternalPosition(order.symbol, existing.quantity + delta, direction, entry_price))
+            else:
+                positions.append(InternalPosition(order.symbol, delta, direction, delta_fill_price))
+        self._save(snapshot, available_cash=available_cash, orders=orders, positions=tuple(positions))
+        return delta
 
     def record_order_filled(
         self,
@@ -201,7 +285,15 @@ class InternalTradingStateTransitions:
         if quantity is not None and quantity != current.expected_quantity:
             raise ValueError("filled quantity does not match internal order")
         return tuple(
-            InternalOrderState(order.order_id, order.symbol, status, expected_quantity)
+            InternalOrderState(
+                order.order_id,
+                order.symbol,
+                status,
+                expected_quantity,
+                order.filled_quantity,
+                order.average_fill_price,
+                order.transaction_type,
+            )
             if order.order_id == order_id else order
             for order in orders
         )

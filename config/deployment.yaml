@@ -28,6 +28,11 @@ scheduler:
       enabled: true
       critical: true
       run_at: "09:05"
+    - name: "forced-intraday-square-off"
+      type: "forced_square_off"
+      enabled: true
+      critical: true
+      run_at: "15:15"
     - name: "operational-learning-rerun"
       type: "learning_rerun"
       enabled: true

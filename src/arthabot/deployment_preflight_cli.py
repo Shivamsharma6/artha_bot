@@ -28,6 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--live-feed-handler-configured", action="store_true")
     parser.add_argument("--learning-rerun-handler-configured", action="store_true")
     parser.add_argument("--strategy-calibration-handler-configured", action="store_true")
+    parser.add_argument("--forced-square-off-handler-configured", action="store_true")
     args = parser.parse_args(argv)
 
     audit = JsonlAuditStore(args.audit_path)
@@ -40,6 +41,7 @@ def main(argv: list[str] | None = None) -> int:
                 live_feed_supervision=args.live_feed_handler_configured,
                 learning_rerun=args.learning_rerun_handler_configured,
                 strategy_calibration=args.strategy_calibration_handler_configured,
+                forced_square_off=args.forced_square_off_handler_configured,
             ),
             audit_path=Path(args.audit_path),
             instrument_store_path=Path(args.instrument_store_path),

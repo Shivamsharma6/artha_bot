@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
 
 KNOWN_BROKER_STATES = {"OPEN", "COMPLETE", "CANCELLED", "REJECTED", "TRIGGER PENDING"}
@@ -20,6 +21,9 @@ class InternalOrderState:
     symbol: str
     status: str
     expected_quantity: int
+    filled_quantity: int = 0
+    average_fill_price: Decimal | None = None
+    transaction_type: str | None = None
 
 
 @dataclass(frozen=True)

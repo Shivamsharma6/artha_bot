@@ -29,7 +29,8 @@ from arthabot.operational_handlers import (
 from arthabot.scheduler import ScheduledJob, TimeOfDaySchedule
 from arthabot.secrets import SecretConfig, load_secret_export
 from arthabot.reconciliation_operations import BrokerReconciliationOperation, BrokerReconciliationSchedulerHandler
-from arthabot.http_clients import build_zerodha_http_client
+from arthabot.http_clients import build_zerodha_gateway, build_zerodha_http_client
+from arthabot.square_off import ForcedSquareOffSchedulerHandler, ForcedSquareOffService
 from arthabot.strategy_calibration import CalibrationThresholds, StrategyCalibrationArtifactStore
 from arthabot.strategy_calibration_cli import _historical_provider_from_json
 from arthabot.strategy_calibration_config import load_strategy_calibration_config
@@ -66,6 +67,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         live_feed = _build_live_feed_handler(args, secrets)
         reconciliation = _build_reconciliation_handler(args, secrets)
+        square_off = _build_square_off_handler(args, secrets)
         learning_rerun, strategy_calibration = _build_file_backed_handlers(args, secrets)
         service = build_paper_deployment_service(
             config_dir=args.config_dir,
@@ -75,6 +77,7 @@ def main(argv: list[str] | None = None) -> int:
             learning_rerun=learning_rerun,
             strategy_calibration=strategy_calibration,
             broker_reconciliation=reconciliation,
+            forced_square_off=square_off,
             secret_config=secrets,
             interval_seconds=args.interval_seconds,
         )
@@ -168,6 +171,19 @@ def _build_reconciliation_handler(args, secrets):
     )
 
 
+def _build_square_off_handler(args, secrets):
+    audit = JsonlAuditStore(Path(args.audit_path).with_name("forced_square_off.audit.jsonl"))
+    state_store = InternalTradingStateStore(args.internal_state_path)
+    return ForcedSquareOffSchedulerHandler(
+        service=ForcedSquareOffService(
+            gateway=build_zerodha_gateway(secret_config=secrets),
+            state_store=state_store,
+            transitions=InternalTradingStateTransitions(store=state_store),
+            audit=audit,
+        )
+    )
+
+
 def _noop_registry() -> DeploymentJobRegistry:
     return DeploymentJobRegistry(
         factories={
@@ -177,6 +193,7 @@ def _noop_registry() -> DeploymentJobRegistry:
             "learning_rerun": _build_noop_job,
             "strategy_calibration": _build_noop_job,
             "broker_reconciliation": _build_noop_job,
+            "forced_square_off": _build_noop_job,
         }
     )
 

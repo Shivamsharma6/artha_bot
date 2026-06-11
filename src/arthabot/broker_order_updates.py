@@ -50,13 +50,11 @@ class BrokerOrderUpdateProcessor:
             return self._failed("ORDER_SYMBOL_MISMATCH", order_id=order_id)
         if status not in self.KNOWN_STATES:
             return self._failed("UNKNOWN_BROKER_ORDER_STATE", order_id=order_id)
-        if order.status == status and status in self.TERMINAL_STATES:
+        if order.status == status and order.filled_quantity == filled_quantity and status in self.TERMINAL_STATES:
             return self._duplicate(order_id)
-        if 0 < filled_quantity < order.expected_quantity:
-            return self._failed("PARTIAL_FILL_UNSUPPORTED", order_id=order_id)
 
-        if status == "COMPLETE":
-            if filled_quantity != order.expected_quantity:
+        if status in {"OPEN", "COMPLETE"} and filled_quantity > 0:
+            if status == "COMPLETE" and filled_quantity != order.expected_quantity:
                 return self._failed("FILL_MISMATCH", order_id=order_id)
             transaction_type = str(update.get("transaction_type", ""))
             if transaction_type not in {"BUY", "SELL"}:
@@ -70,39 +68,50 @@ class BrokerOrderUpdateProcessor:
                 (position for position in snapshot.positions if position.symbol == symbol and position.direction != fill_direction),
                 None,
             )
+            realized_delta = None
             if opposing is not None:
-                if opposing.quantity != filled_quantity or opposing.entry_price is None:
+                delta_quantity = filled_quantity - order.filled_quantity
+                if delta_quantity <= 0:
+                    return self._duplicate(order_id)
+                if opposing.quantity < delta_quantity or opposing.entry_price is None:
                     return self._failed("EXIT_POSITION_STATE_MISMATCH", order_id=order_id)
-                estimate = self.brokerage.estimate_intraday_equity(
+                cumulative = self.brokerage.estimate_intraday_equity(
                     side=TradeSide.LONG if opposing.direction == Direction.LONG else TradeSide.SHORT,
                     entry_price=opposing.entry_price,
                     exit_price=fill_price,
                     quantity=filled_quantity,
                 )
-                self.transitions.record_order_cancelled(order_id=order_id)
-                self.transitions.record_position_closed(
-                    symbol=symbol,
-                    direction=opposing.direction,
-                    quantity=filled_quantity,
-                    realized_net_pnl=estimate.net_pnl,
-                )
-                return self._applied("BROKER_EXIT_FILL_APPLIED", order_id, net_pnl=estimate.net_pnl)
-            self.transitions.record_order_filled(
-                order_id=order_id, symbol=symbol, quantity=filled_quantity,
-                direction=fill_direction, fill_price=fill_price,
+                previous_net = Decimal("0")
+                if order.filled_quantity and order.average_fill_price is not None:
+                    previous_net = self.brokerage.estimate_intraday_equity(
+                        side=TradeSide.LONG if opposing.direction == Direction.LONG else TradeSide.SHORT,
+                        entry_price=opposing.entry_price,
+                        exit_price=order.average_fill_price,
+                        quantity=order.filled_quantity,
+                    ).net_pnl
+                realized_delta = cumulative.net_pnl - previous_net
+            delta = self.transitions.record_fill_progress(
+                order_id=order_id,
+                cumulative_filled_quantity=filled_quantity,
+                cumulative_average_price=fill_price,
+                direction=fill_direction,
+                realized_net_pnl=realized_delta,
             )
-            return self._applied("BROKER_ORDER_FILL_APPLIED", order_id)
+            reason = "BROKER_EXIT_FILL_APPLIED" if opposing is not None else "BROKER_ORDER_FILL_APPLIED"
+            return self._applied(reason, order_id, net_pnl=realized_delta, filled_delta=delta)
         if status in {"CANCELLED", "REJECTED"}:
             self.transitions.record_order_cancelled(order_id=order_id)
             return self._applied(f"BROKER_ORDER_{status}_APPLIED", order_id)
-        if filled_quantity != 0:
-            return self._failed("PARTIAL_FILL_UNSUPPORTED", order_id=order_id)
+        if filled_quantity != order.filled_quantity:
+            return self._failed("FILL_STATE_MISMATCH", order_id=order_id)
         return BrokerOrderUpdateResult(False, "BROKER_ORDER_UPDATE_NO_CHANGE", False)
 
-    def _applied(self, reason_code: str, order_id: str, *, net_pnl=None) -> BrokerOrderUpdateResult:
+    def _applied(self, reason_code: str, order_id: str, *, net_pnl=None, filled_delta=None) -> BrokerOrderUpdateResult:
         payload = {"order_id": order_id, "reason_code": reason_code}
         if net_pnl is not None:
             payload["realized_net_pnl"] = str(net_pnl)
+        if filled_delta is not None:
+            payload["filled_delta"] = filled_delta
         self.audit.append(event_type="broker_order_update_applied", payload=payload)
         return BrokerOrderUpdateResult(True, reason_code, False)
 

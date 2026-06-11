@@ -30,6 +30,7 @@ class DeploymentRegistryDependencies:
     learning_rerun: OperationalHandler
     strategy_calibration: OperationalHandler | None = None
     broker_reconciliation: OperationalHandler | None = None
+    forced_square_off: OperationalHandler | None = None
     exchange: str = "NSE"
     news_query_builder: NewsQueryBuilder | None = None
     news_curation: NewsCurationConfig | None = None
@@ -65,6 +66,10 @@ def build_provider_job_registry(dependencies: DeploymentRegistryDependencies) ->
             "broker_reconciliation": lambda config: _build_handler_job(
                 config=config,
                 handler=_require_handler(dependencies.broker_reconciliation, "broker_reconciliation"),
+            ),
+            "forced_square_off": lambda config: _build_handler_job(
+                config=config,
+                handler=_require_handler(dependencies.forced_square_off, "forced_square_off"),
             ),
         }
     )
