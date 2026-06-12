@@ -296,6 +296,8 @@ def main(argv: list[str] | None = None) -> int:
                 "win_rate": float(win_rate),
                 "total_trades": total_trades,
                 "capital": capital,
+                "starting_capital": float(pipeline.session.starting_capital),
+                "daily_loss_limit": float(capital * runtime_config.risk.max_daily_loss_pct),
                 "mode": "PAPER",
                 "positions_list": positions,
                 "candidates": [f"{c.symbol} {c.direction.name} {c.strategy_version}" for c in candidates],

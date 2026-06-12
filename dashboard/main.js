@@ -7,7 +7,61 @@ let websocketConnected = false;
 const loginUrlEl = document.getElementById('zerodha-login-url');
 const redirectUrlEl = document.getElementById('zerodha-redirect-url');
 const authStatusEl = document.getElementById('zerodha-auth-status');
-    // Admin token removed
+const closedTradesListEl = document.getElementById('closed-trades-list');
+const watchlistListEl = document.getElementById('watchlist-list');
+const riskProgressFillEl = document.getElementById('risk-progress-fill');
+const riskValueTextEl = document.getElementById('risk-value-text');
+
+let systemLogs = [];
+let currentLogFilter = 'all';
+let pnlHistory = [];
+let pnlChart = null;
+
+// Initialize Chart
+function initChart() {
+    const ctx = document.getElementById('pnl-chart').getContext('2d');
+    pnlChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Day P&L',
+                data: [],
+                borderColor: '#00e676',
+                backgroundColor: 'rgba(0, 230, 118, 0.1)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.4,
+                pointRadius: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false }
+            },
+            scales: {
+                x: { display: false },
+                y: { 
+                    grid: { color: 'rgba(255,255,255,0.05)' },
+                    ticks: { color: '#94a3b8' }
+                }
+            }
+        }
+    });
+}
+initChart();
+
+// Setup Log Filters
+document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        e.target.classList.add('active');
+        currentLogFilter = e.target.dataset.filter;
+        renderLogs();
+    });
+});
 
 document.getElementById('load-zerodha-login').addEventListener('click', async () => {
     authStatusEl.textContent = 'Loading official login URL...';
@@ -115,6 +169,36 @@ function connectWebSocket() {
                     const net = data.capital + data.pnl;
                     capitalEl.textContent = `₹${net.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
                 }
+                
+                // Update Risk Bar
+                if (data.daily_loss_limit && data.daily_loss_limit > 0) {
+                    const realizedLoss = data.pnl < 0 ? Math.abs(data.pnl) : 0;
+                    let pct = (realizedLoss / data.daily_loss_limit) * 100;
+                    if (pct > 100) pct = 100;
+                    riskValueTextEl.textContent = `${pct.toFixed(1)}%`;
+                    riskProgressFillEl.style.width = `${pct}%`;
+                    if (pct < 50) {
+                        riskProgressFillEl.style.background = 'var(--accent-green)';
+                    } else if (pct < 80) {
+                        riskProgressFillEl.style.background = '#ffeb3b';
+                    } else {
+                        riskProgressFillEl.style.background = 'var(--accent-red)';
+                    }
+                }
+
+                // Update Chart
+                if (data.pnl !== undefined && pnlChart) {
+                    const timeStr = new Date(data.timestamp).toLocaleTimeString();
+                    pnlHistory.push({ time: timeStr, pnl: data.pnl });
+                    if (pnlHistory.length > 50) pnlHistory.shift();
+                    
+                    pnlChart.data.labels = pnlHistory.map(d => d.time);
+                    pnlChart.data.datasets[0].data = pnlHistory.map(d => d.pnl);
+                    pnlChart.data.datasets[0].borderColor = data.pnl >= 0 ? '#00e676' : '#ff3d00';
+                    pnlChart.data.datasets[0].backgroundColor = data.pnl >= 0 ? 'rgba(0, 230, 118, 0.1)' : 'rgba(255, 61, 0, 0.1)';
+                    pnlChart.update();
+                }
+
                 if (data.mode) {
                     const modeBadge = document.getElementById('system-mode');
                     modeBadge.textContent = data.mode;
@@ -144,7 +228,46 @@ function connectWebSocket() {
                     }
                 }
                 
+                // Render Closed Trades
+                if (data.trades) {
+                    const closedTrades = data.trades.filter(t => t.accepted);
+                    if (closedTrades.length === 0) {
+                        closedTradesListEl.innerHTML = '<div class="placeholder-text">No closed trades</div>';
+                    } else {
+                        closedTradesListEl.innerHTML = closedTrades.map(t => {
+                            const netPnl = parseFloat(t.gross_pnl) - parseFloat(t.total_costs);
+                            const isProfit = netPnl >= 0;
+                            const pnlFormatted = `₹${Math.abs(netPnl).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                            const pnlLabel = isProfit ? `+${pnlFormatted}` : `-${pnlFormatted}`;
+                            return `
+                            <div class="position-card" style="padding: 0.75rem; border-color: rgba(255,255,255,0.02)">
+                                <div class="position-info">
+                                    <span class="position-symbol" style="font-size: 1rem;">${t.symbol}</span>
+                                    <span style="font-size: 0.65rem; color: var(--text-muted)">Costs: ₹${parseFloat(t.total_costs).toFixed(2)}</span>
+                                </div>
+                                <div class="position-pnl" style="font-size: 1rem; color: ${isProfit ? '#4caf50' : '#f44336'}">
+                                    ${pnlLabel}
+                                </div>
+                            </div>`;
+                        }).join('');
+                    }
+                }
+
                 if (data.candidates && data.candidates.length > 0) {
+                    watchlistListEl.innerHTML = data.candidates.map(c => {
+                        const parts = c.split(' ');
+                        const sym = parts[0];
+                        const dir = parts[1] || '';
+                        const strat = parts[2] || '';
+                        const formattedStrat = strat ? strat.replace('-v1', '') : '';
+                        return `
+                        <div class="watchlist-item">
+                            <span class="watchlist-symbol">${sym}</span>
+                            <span class="watchlist-dir ${dir.toLowerCase()}">${dir}</span>
+                            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">Strategy: ${formattedStrat}</div>
+                        </div>`;
+                    }).join('');
+                    
                     const friendlyCands = data.candidates.map(c => {
                         const parts = c.split(' ');
                         const sym = parts[0];
@@ -154,11 +277,11 @@ function connectWebSocket() {
                         return `looking for ${dir} setup on ${sym} (via ${formattedStrat})`;
                     });
                     
-                    // Deduplicate if needed, though they now have different strategies
                     const uniqueCands = [...new Set(friendlyCands)];
                     const timeStr = new Date(data.timestamp).toLocaleTimeString();
                     addLog(`[${timeStr}] AI Engine is ${uniqueCands.join(' | ')}`, 'info');
                 } else {
+                    watchlistListEl.innerHTML = '<div class="placeholder-text">Scanning for candidates...</div>';
                     const timeStr = new Date(data.timestamp).toLocaleTimeString();
                     addLog(`[${timeStr}] Scanning market for high-probability setups...`, 'tick');
                 }
@@ -170,20 +293,36 @@ function connectWebSocket() {
 }
 
 function addLog(message, type = 'info') {
-    const li = document.createElement('li');
-    li.className = `log-entry log-${type}`;
-    // Add icon based on type
-    let icon = '⚡️';
-    if (type === 'tick') icon = '🔍';
-    if (type === 'error') icon = '⚠️';
+    // Add to state
+    systemLogs.unshift({ message, type, id: Date.now() + Math.random() });
     
-    li.innerHTML = `<span class="log-icon">${icon}</span> <span class="log-text">${message}</span>`;
-    logList.prepend(li);
-    
-    // Keep max 50 logs
-    if (logList.children.length > 50) {
-        logList.lastChild.remove();
+    // Keep max 100 logs
+    if (systemLogs.length > 100) {
+        systemLogs.pop();
     }
+    
+    renderLogs();
+}
+
+function renderLogs() {
+    logList.innerHTML = '';
+    
+    const filteredLogs = systemLogs.filter(log => {
+        if (currentLogFilter === 'all') return true;
+        return log.type === currentLogFilter;
+    });
+
+    filteredLogs.forEach(log => {
+        const li = document.createElement('li');
+        li.className = `log-entry log-${log.type}`;
+        
+        let icon = '⚡️';
+        if (log.type === 'tick') icon = '🔍';
+        if (log.type === 'error') icon = '⚠️';
+        
+        li.innerHTML = `<span class="log-icon">${icon}</span> <span class="log-text">${log.message}</span>`;
+        logList.appendChild(li);
+    });
 }
 
 // Boot
