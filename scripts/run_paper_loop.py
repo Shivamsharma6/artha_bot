@@ -22,7 +22,7 @@ from arthabot.runtime_pipeline import HermesAdapter, PaperRuntimePipeline
 from arthabot.runtime_strategy_provider import load_runtime_strategy_config
 from arthabot.secrets import SecretConfig
 from arthabot.top_movers import KiteTopMoversClient
-from arthabot.dashboard_api import app, broadcast_update
+from arthabot.dashboard_api import app, broadcast_update, set_runtime_health
 import threading
 import uvicorn
 from kiteconnect import KiteTicker
@@ -159,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.info(f"Connecting to Kite WebSocket for tokens {list(token_to_symbol.values())}...")
     decision = supervisor.connect(tokens=tokens, now=datetime.now())
     if decision.must_stop_trading:
+        set_runtime_health(trading_ready=False, reason_code=decision.reason_code)
         logging.error("Failed to connect to Kite WebSocket.")
         return 1
 
@@ -197,10 +198,17 @@ def main(argv: list[str] | None = None) -> int:
                     logging.info(f"[{sym}] Tick OK: Price {tick.price}, Vol {tick.volume}")
                 else:
                     logging.info(f"[{sym}] Feed Health: {health.reason_code}")
+
+            feed_ready = all(pipeline.feed.health(sym, now=now).ok for sym in symbols_to_track)
+            set_runtime_health(
+                trading_ready=feed_ready,
+                reason_code="READY" if feed_ready else "MARKET_DATA_UNAVAILABLE",
+            )
                     
             try:
                 candidates = list(composer.generate_from_top_movers(limit=5, now=now))
             except Exception as exc:
+                set_runtime_health(trading_ready=False, reason_code="CANDIDATE_PROVIDER_FAILED")
                 logging.exception("Candidate refresh failed; skipping this cycle")
                 audit.append(
                     event_type="paper_candidate_refresh_failed",

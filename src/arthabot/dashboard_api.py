@@ -20,11 +20,28 @@ _state_queue = Queue()
 
 # Store active connections
 active_connections = set()
+_runtime_health_lock = threading.Lock()
+_runtime_health = {
+    "status": "degraded",
+    "mode": "PAPER",
+    "trading_ready": False,
+    "reason_code": "STARTING",
+}
+
+
+def set_runtime_health(*, trading_ready: bool, reason_code: str) -> None:
+    with _runtime_health_lock:
+        _runtime_health.update(
+            status="ok" if trading_ready else "degraded",
+            trading_ready=trading_ready,
+            reason_code=reason_code,
+        )
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "mode": "PAPER"}
+    with _runtime_health_lock:
+        return dict(_runtime_health)
 
 def broadcast_update(payload: dict):
     """Called by the bot to send data to the dashboard."""

@@ -17,8 +17,10 @@ echo "Saving Docker image to tar..."
 docker save -o ${TAR_FILE} ${IMAGE_NAME}
 
 echo "Transferring files to EC2..."
+chmod 600 .env
 scp -o StrictHostKeyChecking=no -i ${KEY_FILE} ${TAR_FILE} ${EC2_USER}@${EC2_IP}:~
 scp -o StrictHostKeyChecking=no -i ${KEY_FILE} .env ${EC2_USER}@${EC2_IP}:~
+ssh -o StrictHostKeyChecking=no -i ${KEY_FILE} ${EC2_USER}@${EC2_IP} "chmod 600 ~/.env"
 
 echo "Loading image on EC2..."
 ssh -o StrictHostKeyChecking=no -i ${KEY_FILE} ${EC2_USER}@${EC2_IP} "docker load -i ${TAR_FILE}"

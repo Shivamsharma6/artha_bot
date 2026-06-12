@@ -3,18 +3,40 @@ import './style.css';
 const statusEl = document.getElementById('connection-status');
 const logList = document.getElementById('log-list');
 const positionsCountEl = document.getElementById('positions-count');
+let websocketConnected = false;
+
+async function refreshRuntimeHealth() {
+    if (!websocketConnected) return;
+    try {
+        const response = await fetch('/api/health', { cache: 'no-store' });
+        const health = await response.json();
+        if (health.trading_ready) {
+            statusEl.textContent = 'Connected (PAPER)';
+            statusEl.className = 'status connected';
+        } else {
+            statusEl.textContent = 'Connected (PAPER, degraded)';
+            statusEl.className = 'status disconnected';
+        }
+    } catch (error) {
+        statusEl.textContent = 'Connected (health unavailable)';
+        statusEl.className = 'status disconnected';
+    }
+}
 
 function connectWebSocket() {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws`);
 
     ws.onopen = () => {
+        websocketConnected = true;
         statusEl.textContent = 'Connected (PAPER)';
         statusEl.className = 'status connected';
         addLog('System: Connected to ArthaBot WebSocket', 'info');
+        refreshRuntimeHealth();
     };
 
     ws.onclose = () => {
+        websocketConnected = false;
         statusEl.textContent = 'Disconnected';
         statusEl.className = 'status disconnected';
         addLog('System: Disconnected. Reconnecting...', 'error');
@@ -124,3 +146,4 @@ function addLog(message, type = 'info') {
 
 // Boot
 connectWebSocket();
+setInterval(refreshRuntimeHealth, 5000);
