@@ -11,6 +11,7 @@ from arthabot.http_clients import (
     NewsHttpClient,
     UrllibHttpTransport,
     ZerodhaHttpClient,
+    KiteAuthenticationError,
     build_historical_http_client,
     build_news_http_client,
     build_zerodha_http_client,
@@ -25,6 +26,33 @@ def test_zerodha_http_client_requires_credentials():
 
     with pytest.raises(PermissionError, match="Zerodha credentials"):
         client.place_order(BrokerOrderRequest(symbol="INFY", direction=Direction.LONG, quantity=1, price=Decimal("100")))
+
+
+def test_zerodha_quote_failure_classifies_expired_session_for_reauthentication():
+    def expired_transport(request):
+        raise RuntimeError("HTTP 403 TokenException: Invalid session credentials")
+
+    client = ZerodhaHttpClient(
+        secret_config=SecretConfig(
+            zerodha_api_key="key", zerodha_api_secret="secret", zerodha_access_token="expired"
+        ),
+        transport=expired_transport,
+    )
+
+    with pytest.raises(KiteAuthenticationError, match="KITE_REAUTH_REQUIRED"):
+        client.fetch_quotes(["NSE:INFY"])
+
+
+def test_zerodha_balance_failure_classifies_expired_session_for_reauthentication():
+    client = ZerodhaHttpClient(
+        secret_config=SecretConfig(
+            zerodha_api_key="key", zerodha_api_secret="secret", zerodha_access_token="expired"
+        ),
+        transport=lambda request: (_ for _ in ()).throw(RuntimeError("HTTP 403 for GET /user/margins/equity")),
+    )
+
+    with pytest.raises(KiteAuthenticationError, match="KITE_REAUTH_REQUIRED"):
+        client.fetch_margin_balance()
 
 
 def test_urllib_transport_passes_timeout_as_keyword_argument():

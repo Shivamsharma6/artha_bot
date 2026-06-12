@@ -1,8 +1,16 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from dataclasses import dataclass
+import hmac
+from typing import Protocol
+
+from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import asyncio
 from queue import Queue
 import threading
+from arthabot.runtime_state import RuntimeStateStore
+from arthabot.zerodha_auth import SessionRenewalResult
+from arthabot.audit_store import JsonlAuditStore
 
 app = FastAPI()
 
@@ -27,6 +35,44 @@ _runtime_health = {
     "trading_ready": False,
     "reason_code": "STARTING",
 }
+_runtime_state_store: RuntimeStateStore | None = None
+_runtime_state: dict = {}
+
+
+class RemoteRenewal(Protocol):
+    @property
+    def login_url(self) -> str: ...
+    def exchange(self, redirect_url_or_token: str) -> SessionRenewalResult: ...
+
+
+@dataclass(frozen=True)
+class DashboardZerodhaAuth:
+    renewal: RemoteRenewal
+    audit: JsonlAuditStore | None = None
+
+
+class ZerodhaExchangeRequest(BaseModel):
+    redirect_url: str
+
+
+_zerodha_auth: DashboardZerodhaAuth | None = None
+
+
+def configure_zerodha_auth(config: DashboardZerodhaAuth | None) -> None:
+    global _zerodha_auth
+    _zerodha_auth = config
+
+
+def _require_auth() -> DashboardZerodhaAuth:
+    if _zerodha_auth is None:
+        raise HTTPException(status_code=503, detail="Zerodha dashboard authentication is not configured")
+    return _zerodha_auth
+
+
+def configure_runtime_state(store: RuntimeStateStore) -> None:
+    global _runtime_state_store, _runtime_state
+    _runtime_state_store = store
+    _runtime_state = store.load_or_default()
 
 
 def set_runtime_health(*, trading_ready: bool, reason_code: str) -> None:
@@ -43,8 +89,48 @@ async def health():
     with _runtime_health_lock:
         return dict(_runtime_health)
 
+
+@app.get("/state")
+async def state():
+    return dict(_runtime_state)
+
+
+@app.get("/auth/zerodha")
+async def zerodha_login():
+    auth = _require_auth()
+    return {"login_url": auth.renewal.login_url}
+
+
+@app.post("/auth/zerodha/exchange")
+async def zerodha_exchange(request: ZerodhaExchangeRequest):
+    auth = _require_auth()
+    try:
+        result = auth.renewal.exchange(request.redirect_url)
+    except (ValueError, PermissionError) as exc:
+        if auth.audit is not None:
+            auth.audit.append(event_type="zerodha_dashboard_exchange_rejected", payload={"error_type": type(exc).__name__})
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        if auth.audit is not None:
+            auth.audit.append(event_type="zerodha_dashboard_exchange_failed", payload={"error_type": type(exc).__name__})
+        raise HTTPException(status_code=502, detail="Zerodha session exchange failed") from exc
+    if auth.audit is not None:
+        auth.audit.append(event_type="zerodha_dashboard_exchange_completed", payload={"user_id": result.user_id})
+    
+    async def _delayed_restart():
+        await asyncio.sleep(1)
+        import os
+        os._exit(0)
+    
+    asyncio.create_task(_delayed_restart())
+    return {"status": "validated", "user_id": result.user_id, "restart_required": True}
+
 def broadcast_update(payload: dict):
     """Called by the bot to send data to the dashboard."""
+    global _runtime_state
+    _runtime_state = dict(payload)
+    if _runtime_state_store is not None:
+        _runtime_state_store.save(_runtime_state)
     _state_queue.put(payload)
 
 @app.websocket("/ws")

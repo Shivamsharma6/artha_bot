@@ -52,6 +52,15 @@ class PaperSession:
         self._trades.append(TradeRecord(symbol=symbol, gross_pnl=Decimal("0"), total_costs=Decimal("0"), accepted=False))
         return None
 
+    def restore_trades(self, trades: list[TradeRecord]) -> None:
+        if self._trades:
+            raise RuntimeError("paper trade ledger can only be restored into an empty session")
+        self._trades = list(trades)
+
+    @property
+    def trades(self) -> tuple[TradeRecord, ...]:
+        return tuple(self._trades)
+
     def daily_report(self) -> DailyReport:
         return DailyReport(
             date=self.trading_date.isoformat(),
@@ -64,4 +73,3 @@ class PaperSession:
         if intent.direction == Direction.LONG:
             return (intent.exit_price - intent.entry_price) * intent.quantity
         return (intent.entry_price - intent.exit_price) * intent.quantity
-

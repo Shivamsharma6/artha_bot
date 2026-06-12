@@ -4,7 +4,7 @@ import argparse
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from kiteconnect import KiteTicker
+from kiteconnect import KiteConnect, KiteTicker
 
 from arthabot.audit_store import JsonlAuditStore
 from arthabot.brokerage import BrokerageConfig

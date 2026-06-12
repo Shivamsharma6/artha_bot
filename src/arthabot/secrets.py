@@ -78,6 +78,24 @@ def update_env_access_token(path: str | Path, access_token: str) -> None:
     target.chmod(0o600)
 
 
+def load_access_token_file(path: str | Path) -> str | None:
+    source = Path(path)
+    if not source.exists():
+        return None
+    try:
+        mode = stat.S_IMODE(source.stat().st_mode)
+    except OSError as exc:
+        raise ValueError("access token file is unavailable") from exc
+    if not source.is_file() or mode & 0o077:
+        raise PermissionError("access token file must be owner-only")
+    for line in source.read_text(encoding="utf-8").splitlines():
+        if line.startswith("ZERODHA_ACCESS_TOKEN="):
+            token = line.split("=", 1)[1].strip()
+            if token:
+                return token
+    return None
+
+
 def load_secret_export(path: str | Path) -> SecretConfig:
     source = Path(path)
     try:

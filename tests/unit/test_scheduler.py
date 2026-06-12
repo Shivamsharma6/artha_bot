@@ -44,7 +44,7 @@ def test_scheduler_runner_does_not_repeat_job_on_later_tick_same_day(tmp_path):
     assert calls == [datetime(2026, 1, 5, 9, 0, tzinfo=timezone.utc)]
 
 
-def test_scheduler_runner_skips_job_before_scheduled_time_and_audits(tmp_path):
+def test_scheduler_runner_skips_job_before_scheduled_time_without_high_volume_audit(tmp_path):
     audit = JsonlAuditStore(tmp_path / "audit.jsonl")
     runner = SchedulerRunner(audit=audit)
     job = ScheduledJob(
@@ -58,7 +58,7 @@ def test_scheduler_runner_skips_job_before_scheduled_time_and_audits(tmp_path):
 
     assert not result.executed
     assert result.reason_code == "SCHEDULE_NOT_DUE"
-    assert audit.read_all()[0].event_type == "scheduled_job_skipped"
+    assert audit.read_all() == []
 
 
 def test_scheduler_runner_fails_closed_for_critical_job_error(tmp_path):

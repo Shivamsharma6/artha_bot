@@ -5,6 +5,7 @@ from arthabot.common import Direction
 from arthabot.execution import ExecutionEngine
 from arthabot.live_promotion import LivePromotionChecklist, LivePromotionGate
 from arthabot.paper_session import PaperSession, PaperTradeIntent
+from arthabot.reporting import TradeRecord
 
 
 def test_paper_session_records_simulated_fills_and_daily_report():
@@ -49,6 +50,20 @@ def test_paper_session_records_rejected_trade_without_execution():
     assert report["rejected_trades"] == 1
 
 
+def test_paper_session_restores_persisted_trade_ledger():
+    session = PaperSession(
+        trading_date=date(2026, 6, 12),
+        starting_capital=Decimal("5000"),
+        execution=ExecutionEngine(),
+    )
+
+    session.restore_trades(
+        [TradeRecord(symbol="INFY", gross_pnl=Decimal("25"), total_costs=Decimal("5"), accepted=True)]
+    )
+
+    assert session.daily_report().summarize()["ending_capital"] == Decimal("5020")
+
+
 def test_live_promotion_gate_requires_all_safety_conditions_and_human_approval():
     checklist = LivePromotionChecklist(
         backtested=True,
@@ -78,4 +93,3 @@ def test_live_promotion_gate_approves_only_complete_checklist():
 
     assert decision.approved
     assert decision.reason_code == "LIVE_PROMOTION_APPROVED"
-

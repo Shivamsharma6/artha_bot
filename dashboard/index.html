@@ -38,6 +38,16 @@
       <div id="connection-status" class="status disconnected">Disconnected</div>
     </header>
     <main class="grid">
+      <section class="broker-auth">
+        <h2>Zerodha Session</h2>
+        <p class="auth-help">Generate today's broker session without placing any order.</p>
+        <button id="load-zerodha-login" type="button">Get login URL</button>
+        <a id="zerodha-login-url" class="login-url hidden" target="_blank" rel="noopener noreferrer"></a>
+        <label for="zerodha-redirect-url">Paste the full redirected URL</label>
+        <textarea id="zerodha-redirect-url" rows="3" placeholder="https://.../?request_token=...&action=login"></textarea>
+        <button id="exchange-zerodha-token" type="button">Validate session</button>
+        <div id="zerodha-auth-status" class="auth-status"></div>
+      </section>
       <section class="positions">
         <h2>Active Positions</h2>
         <div id="positions-list" class="placeholder-text">No active positions</div>

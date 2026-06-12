@@ -1,6 +1,6 @@
 # ArthaBot Project Status
 
-Date: 2026-06-11
+Date: 2026-06-12
 
 ## Implemented Bootstrap Slice
 
@@ -49,6 +49,21 @@ Date: 2026-06-11
 * Backtest execution loop converts valid signals into cost-adjusted trades and counts
   rejected and missed trades.
 * JSONL audit store persists redacted audit events and can read them back in order.
+* JSONL audit stores rotate by size with bounded backups, and routine scheduler
+  not-due ticks no longer produce unbounded audit traffic.
+* Zerodha daily session renewal opens the official broker login, captures the
+  loopback redirect, exchanges the one-time request token, validates the session
+  with a read-only profile call, and securely updates `.env`; password and TOTP
+  entry remain interactive and are never stored by ArthaBot.
+* Remote deployments expose an admin-token-protected dashboard workflow that
+  displays the official Kite login URL and accepts a pasted redirect URL. Token
+  exchange and validation happen server-side; the access token is persisted in
+  the mounted data volume and is never returned to browser JavaScript.
+* Expired Kite quote sessions are classified as `KITE_REAUTH_REQUIRED`, causing
+  PAPER candidate generation to stop cleanly instead of retrying as a generic
+  candidate-provider failure.
+* PAPER runtime metrics and the simulated trade ledger are atomically persisted
+  under `data/` and restored into both the pipeline and dashboard after restart.
 * Learning report detects degraded strategy windows and proposes PAPER-mode parameter
   changes through the Learning Engine guardrails.
 * Validation harness converts evidence into the live-promotion checklist so missing

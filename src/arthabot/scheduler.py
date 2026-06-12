@@ -51,10 +51,6 @@ class SchedulerRunner:
     def run(self, job: ScheduledJob, *, now: datetime) -> ScheduledJobResult:
         last_run_at = self._last_run_at.get(job.name, job.last_run_at)
         if not job.schedule.is_due(now=now, last_run_at=last_run_at):
-            self.audit.append(
-                event_type="scheduled_job_skipped",
-                payload={"job_name": job.name, "reason_code": "SCHEDULE_NOT_DUE"},
-            )
             return ScheduledJobResult(
                 job_name=job.name,
                 executed=False,

@@ -27,6 +27,10 @@ from arthabot.reconciliation import BrokerPosition
 SENSITIVE_HEADERS = {"authorization", "x-api-key"}
 
 
+class KiteAuthenticationError(PermissionError):
+    reason_code = "KITE_REAUTH_REQUIRED"
+
+
 @dataclass(frozen=True, repr=False)
 class HttpRequest:
     method: str
@@ -108,7 +112,7 @@ class ZerodhaHttpClient:
     def place_order(self, order: BrokerOrderRequest) -> BrokerOrderResponse:
         if not self.secret_config.has_zerodha_credentials:
             raise PermissionError("Zerodha credentials are required")
-        raw = self.transport(
+        raw = self._request(
             HttpRequest(
                 method="POST",
                 path=f"/orders/{order.variety}",
@@ -128,7 +132,7 @@ class ZerodhaHttpClient:
     def modify_order(self, order: BrokerModifyRequest, *, variety: str = "regular") -> BrokerOrderResponse:
         if not self.secret_config.has_zerodha_credentials:
             raise PermissionError("Zerodha credentials are required")
-        raw = self.transport(
+        raw = self._request(
             HttpRequest(
                 method="PUT",
                 path=f"/orders/{variety}/{order.order_id}",
@@ -144,7 +148,7 @@ class ZerodhaHttpClient:
     def cancel_order(self, order: BrokerCancelRequest, *, variety: str = "regular") -> BrokerOrderResponse:
         if not self.secret_config.has_zerodha_credentials:
             raise PermissionError("Zerodha credentials are required")
-        raw = self.transport(
+        raw = self._request(
             HttpRequest(
                 method="DELETE",
                 path=f"/orders/{variety}/{order.order_id}",
@@ -172,7 +176,7 @@ class ZerodhaHttpClient:
     def fetch_margin_balance(self, *, segment: str = "equity") -> dict[str, str]:
         if not self.secret_config.has_zerodha_credentials:
             raise PermissionError("Zerodha credentials are required")
-        raw = self.transport(
+        raw = self._request(
             HttpRequest(
                 method="GET",
                 path=f"/user/margins/{segment}",
@@ -186,7 +190,7 @@ class ZerodhaHttpClient:
 
     def fetch_orders(self) -> list[BrokerOrderState]:
         self._require_credentials()
-        raw = self.transport(HttpRequest(method="GET", path="/orders", headers=self._headers()))
+        raw = self._request(HttpRequest(method="GET", path="/orders", headers=self._headers()))
         rows = raw.get("data") or []
         if not isinstance(rows, list):
             raise RuntimeError("Zerodha orders response data must be a list")
@@ -202,7 +206,7 @@ class ZerodhaHttpClient:
 
     def fetch_positions(self) -> list[BrokerPosition]:
         self._require_credentials()
-        raw = self.transport(HttpRequest(method="GET", path="/portfolio/positions", headers=self._headers()))
+        raw = self._request(HttpRequest(method="GET", path="/portfolio/positions", headers=self._headers()))
         data = raw.get("data") or {}
         rows = data.get("net") or []
         if not isinstance(rows, list):
@@ -228,7 +232,7 @@ class ZerodhaHttpClient:
     def fetch_instruments(self, *, exchange: str | None = None) -> list[dict[str, str]]:
         if not self.secret_config.has_zerodha_credentials:
             raise PermissionError("Zerodha credentials are required")
-        raw = self.transport(
+        raw = self._request(
             HttpRequest(
                 method="GET",
                 path=f"/instruments/{exchange}" if exchange else "/instruments",
@@ -244,7 +248,7 @@ class ZerodhaHttpClient:
             raise PermissionError("Zerodha credentials are required")
         if not symbols:
             return {}
-        raw = self.transport(
+        raw = self._request(
             HttpRequest(
                 method="GET",
                 path="/quote",
@@ -255,6 +259,15 @@ class ZerodhaHttpClient:
         if isinstance(raw, dict) and "data" in raw:
             return dict(raw["data"])
         return dict(raw)
+
+    def _request(self, request: HttpRequest) -> Any:
+        try:
+            return self.transport(request)
+        except Exception as exc:
+            message = str(exc).lower()
+            if any(marker in message for marker in ("tokenexception", "invalid session", "api token", "http 403")):
+                raise KiteAuthenticationError("KITE_REAUTH_REQUIRED") from exc
+            raise
 
     def _headers(self) -> dict[str, str]:
         return {

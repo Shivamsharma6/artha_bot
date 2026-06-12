@@ -6,6 +6,9 @@ RUN pip install uv
 # Set working directory
 WORKDIR /opt/arthabot
 
+# Set timezone to Indian Standard Time (IST)
+ENV TZ="Asia/Kolkata"
+
 # Copy pyproject.toml and source
 COPY pyproject.toml uv.lock ./
 COPY src/ src/
@@ -14,6 +17,11 @@ COPY scripts/ scripts/
 
 # Install dependencies using uv
 RUN uv pip install --system .
+
+# Startup regression check
+RUN python -c "import arthabot.deployment_service_cli; print('Deployment CLI module loaded successfully')"
+RUN python scripts/run_paper_loop.py --help > /dev/null
+
 
 EXPOSE 8080
 

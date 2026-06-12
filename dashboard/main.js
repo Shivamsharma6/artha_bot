@@ -4,18 +4,60 @@ const statusEl = document.getElementById('connection-status');
 const logList = document.getElementById('log-list');
 const positionsCountEl = document.getElementById('positions-count');
 let websocketConnected = false;
+const loginUrlEl = document.getElementById('zerodha-login-url');
+const redirectUrlEl = document.getElementById('zerodha-redirect-url');
+const authStatusEl = document.getElementById('zerodha-auth-status');
+    // Admin token removed
+
+document.getElementById('load-zerodha-login').addEventListener('click', async () => {
+    authStatusEl.textContent = 'Loading official login URL...';
+    const response = await fetch('/api/auth/zerodha', { cache: 'no-store' });
+    const payload = await response.json();
+    if (!response.ok) {
+        authStatusEl.textContent = payload.detail || 'Unable to load login URL';
+        return;
+    }
+    loginUrlEl.href = payload.login_url;
+    loginUrlEl.textContent = payload.login_url;
+    loginUrlEl.classList.remove('hidden');
+    authStatusEl.textContent = 'Open the URL, finish Zerodha login, then paste the redirected URL below.';
+});
+
+document.getElementById('exchange-zerodha-token').addEventListener('click', async () => {
+    authStatusEl.textContent = 'Validating session...';
+    const response = await fetch('/api/auth/zerodha/exchange', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ redirect_url: redirectUrlEl.value }),
+    });
+    const payload = await response.json();
+    redirectUrlEl.value = '';
+    if (!response.ok) {
+        authStatusEl.textContent = payload.detail || 'Session validation failed';
+        return;
+    }
+    authStatusEl.textContent = `Session validated for ${payload.user_id}. Auto-restarting the ArthaBot container...`;
+    setTimeout(() => {
+        window.location.reload();
+    }, 3000);
+});
 
 async function refreshRuntimeHealth() {
     if (!websocketConnected) return;
     try {
         const response = await fetch('/api/health', { cache: 'no-store' });
         const health = await response.json();
+        const authSection = document.querySelector('.broker-auth');
         if (health.trading_ready) {
             statusEl.textContent = 'Connected (PAPER)';
             statusEl.className = 'status connected';
+            if (authSection) authSection.style.display = 'none';
         } else {
             statusEl.textContent = 'Connected (PAPER, degraded)';
             statusEl.className = 'status disconnected';
+            if (authSection) authSection.style.display = 'block';
         }
     } catch (error) {
         statusEl.textContent = 'Connected (health unavailable)';

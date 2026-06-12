@@ -40,6 +40,18 @@ def test_jsonl_audit_store_reads_events_in_order(tmp_path):
     assert [event.event_type for event in store.read_all()] == ["decision", "risk_rejection"]
 
 
+def test_jsonl_audit_store_rotates_before_exceeding_configured_size(tmp_path):
+    path = tmp_path / "audit.jsonl"
+    store = JsonlAuditStore(path, max_bytes=180, backup_count=2)
+
+    for index in range(8):
+        store.append(event_type="tick", payload={"index": index, "detail": "x" * 40})
+
+    assert path.exists()
+    assert (tmp_path / "audit.jsonl.1").exists()
+    assert path.stat().st_size <= 180
+
+
 def test_learning_report_detects_degradation_and_recommends_paper_only_change():
     report = LearningReport(
         strategy_version="bootstrap-v1",
