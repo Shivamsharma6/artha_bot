@@ -114,7 +114,7 @@ async function refreshRuntimeHealth() {
             if (authSection) authSection.style.display = 'none';
         } else {
             statusEl.textContent = `Connected (PAPER, degraded: ${health.reason_code || 'unknown'})`;
-            statusEl.className = 'status disconnected';
+            statusEl.className = 'status warning';
             if (authSection) {
                 authSection.style.display = isAuthError ? 'block' : 'none';
             }

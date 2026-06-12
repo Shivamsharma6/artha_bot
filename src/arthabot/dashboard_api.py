@@ -146,15 +146,28 @@ async def websocket_endpoint(websocket: WebSocket):
 
 async def _queue_broadcaster():
     """Background task to read from queue and broadcast."""
+    import logging
+    last_heartbeat = asyncio.get_event_loop().time()
     while True:
         if not _state_queue.empty():
             payload = _state_queue.get()
-            # We must iterate over a copy of the set because it might change during iteration
             for connection in list(active_connections):
                 try:
                     await connection.send_json(payload)
-                except Exception:
+                except Exception as e:
+                    logging.error(f"WebSocket broadcast failed: {e}")
                     active_connections.discard(connection)
+            last_heartbeat = asyncio.get_event_loop().time()
+        else:
+            now = asyncio.get_event_loop().time()
+            if now - last_heartbeat > 5.0:
+                for connection in list(active_connections):
+                    try:
+                        await connection.send_json({"type": "HEARTBEAT"})
+                    except Exception as e:
+                        logging.error(f"WebSocket heartbeat failed: {e}")
+                        active_connections.discard(connection)
+                last_heartbeat = now
         await asyncio.sleep(0.01)
 
 @app.on_event("startup")

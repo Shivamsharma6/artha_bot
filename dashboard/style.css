@@ -395,3 +395,13 @@ section::-webkit-scrollbar-thumb:hover {
 .watchlist-dir.long { color: var(--accent-green); }
 .watchlist-dir.short { color: var(--accent-red); }
 
+
+.warning {
+    background-color: rgba(255, 171, 0, 0.1);
+    color: #ffab00;
+    border: 1px solid rgba(255, 171, 0, 0.2);
+}
+.warning::before {
+    background-color: #ffab00;
+    box-shadow: 0 0 8px #ffab00;
+}
