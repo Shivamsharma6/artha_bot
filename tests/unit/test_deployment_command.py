@@ -42,6 +42,7 @@ def test_build_paper_deployment_service_wires_real_provider_clients_from_env(tmp
         learning_rerun=lambda now: operational_calls.append("learning"),
         strategy_calibration=lambda now: operational_calls.append("calibration"),
         broker_reconciliation=lambda now: operational_calls.append("reconciliation"),
+        forced_square_off=lambda now: operational_calls.append("square_off"),
         interval_seconds=60,
         clock=lambda: datetime(2026, 1, 5, 16, 30, tzinfo=timezone.utc),
         sleep=lambda seconds: None,
@@ -56,7 +57,7 @@ def test_build_paper_deployment_service_wires_real_provider_clients_from_env(tmp
         "/v2/everything",
         "/v2/everything",
     ]
-    assert operational_calls == ["feed", "reconciliation", "learning", "calibration"]
+    assert operational_calls == ["feed", "reconciliation", "square_off", "learning", "calibration"]
 
 
 def test_build_paper_deployment_service_rejects_live_deployment_config(tmp_path, monkeypatch):
@@ -89,4 +90,5 @@ scheduler:
             learning_rerun=lambda now: {},
             strategy_calibration=lambda now: {},
             broker_reconciliation=lambda now: {},
+            forced_square_off=lambda now: {},
         )

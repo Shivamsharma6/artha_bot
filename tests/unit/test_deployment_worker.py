@@ -144,6 +144,7 @@ def test_deployment_worker_builds_all_enabled_jobs_from_default_deployment_confi
                 "learning_rerun",
                 "strategy_calibration",
                 "broker_reconciliation",
+                "forced_square_off",
             }
         }
     )
@@ -160,6 +161,7 @@ def test_deployment_worker_builds_all_enabled_jobs_from_default_deployment_confi
         "news-ingest-core-watchlist",
         "live-feed-supervision",
         "broker-state-reconciliation",
+        "forced-intraday-square-off",
         "operational-learning-rerun",
         "strategy-calibration-rerun",
     ]
@@ -168,6 +170,7 @@ def test_deployment_worker_builds_all_enabled_jobs_from_default_deployment_confi
         "news-ingest-core-watchlist",
         "live-feed-supervision",
         "broker-state-reconciliation",
+        "forced-intraday-square-off",
         "operational-learning-rerun",
         "strategy-calibration-rerun",
     ]

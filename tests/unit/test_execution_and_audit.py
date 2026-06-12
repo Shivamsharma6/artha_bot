@@ -68,7 +68,9 @@ def test_execution_submits_audited_live_intraday_order_through_injected_gateway(
     assert result.status == "OPEN"
     assert result.simulated is False
     assert engine.real_orders_submitted == [intent]
-    assert state_store.load().orders == (InternalOrderState("kite-1", "INFY", "OPEN", 2),)
+    assert state_store.load().orders == (
+        InternalOrderState("kite-1", "INFY", "OPEN", 2, transaction_type="SELL"),
+    )
     event = audit.read_all()[-1]
     assert event.event_type == "live_order_submitted"
     assert event.payload == {

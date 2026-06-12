@@ -31,6 +31,7 @@ def _request(tmp_path: Path) -> DeploymentPreflightRequest:
             live_feed_supervision=True,
             learning_rerun=True,
             strategy_calibration=True,
+            forced_square_off=True,
         ),
         audit_path=tmp_path / "logs" / "audit.jsonl",
         instrument_store_path=tmp_path / "data" / "instruments.json",
@@ -59,6 +60,7 @@ def test_deployment_preflight_reports_missing_credentials_and_handlers(tmp_path)
             live_feed_supervision=False,
             learning_rerun=False,
             strategy_calibration=False,
+            forced_square_off=False,
         ),
         audit_path=request.audit_path,
         instrument_store_path=request.instrument_store_path,
@@ -75,6 +77,7 @@ def test_deployment_preflight_reports_missing_credentials_and_handlers(tmp_path)
     assert "LIVE_FEED_HANDLER_MISSING" in result.reason_codes
     assert "LEARNING_RERUN_HANDLER_MISSING" in result.reason_codes
     assert "CALIBRATION_HANDLER_MISSING" in result.reason_codes
+    assert "FORCED_SQUARE_OFF_HANDLER_MISSING" in result.reason_codes
     assert result.external_reason_codes == (
         "ZERODHA_API_CREDENTIALS_MISSING",
         "KITE_ACCESS_TOKEN_MISSING",
@@ -83,6 +86,7 @@ def test_deployment_preflight_reports_missing_credentials_and_handlers(tmp_path)
     assert "LIVE_FEED_HANDLER_MISSING" in result.local_reason_codes
     assert "LEARNING_RERUN_HANDLER_MISSING" in result.local_reason_codes
     assert "CALIBRATION_HANDLER_MISSING" in result.local_reason_codes
+    assert "FORCED_SQUARE_OFF_HANDLER_MISSING" in result.local_reason_codes
 
 
 def test_deployment_preflight_reports_access_token_as_external_blocker(tmp_path):

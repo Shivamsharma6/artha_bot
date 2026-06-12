@@ -133,6 +133,7 @@ def test_paper_deployment_service_accepts_strategy_calibration_handler(tmp_path)
         learning_rerun=lambda now: {"learning": "ok"},
         strategy_calibration=lambda now: calls.append(("calibration", now.time())),
         broker_reconciliation=lambda now: {"reconciled": True},
+        forced_square_off=lambda now: {"squared_off": True},
         zerodha_transport=FakeTransport(),
         news_transport=FakeTransport(),
         secret_config=SecretConfig(

@@ -34,6 +34,7 @@ def test_deployment_preflight_cli_writes_redacted_ready_artifact(tmp_path, monke
             "--live-feed-handler-configured",
             "--learning-rerun-handler-configured",
             "--strategy-calibration-handler-configured",
+            "--forced-square-off-handler-configured",
         ]
     )
 

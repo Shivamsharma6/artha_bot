@@ -27,7 +27,7 @@ def test_internal_state_store_round_trips_versioned_snapshot(tmp_path):
     loaded = store.load()
 
     assert loaded == snapshot()
-    assert json.loads((tmp_path / "state.json").read_text())["version"] == 2
+    assert json.loads((tmp_path / "state.json").read_text())["version"] == 3
 
 
 def test_internal_state_store_requires_existing_snapshot(tmp_path):
@@ -52,7 +52,7 @@ def test_internal_state_store_rejects_duplicate_order_ids(tmp_path):
 
 def test_internal_state_store_rejects_corrupt_or_unknown_version(tmp_path):
     path = tmp_path / "state.json"
-    path.write_text('{"version": 3}', encoding="utf-8")
+    path.write_text('{"version": 4}', encoding="utf-8")
 
     with pytest.raises(ValueError, match="unsupported internal state version"):
         InternalTradingStateStore(path).load()

@@ -52,6 +52,32 @@ def load_secret_config(*, require_zerodha: bool = False) -> SecretConfig:
     return SecretConfig.from_env(require_zerodha=require_zerodha)
 
 
+def update_env_access_token(path: str | Path, access_token: str) -> None:
+    if not access_token or "\n" in access_token or "\r" in access_token:
+        raise ValueError("access token must be a non-empty single-line value")
+    target = Path(path)
+    lines = target.read_text(encoding="utf-8").splitlines() if target.exists() else []
+    replacement = f"ZERODHA_ACCESS_TOKEN={access_token}"
+    updated: list[str] = []
+    replaced = False
+    for line in lines:
+        if line.startswith("ZERODHA_ACCESS_TOKEN="):
+            if not replaced:
+                updated.append(replacement)
+                replaced = True
+            continue
+        updated.append(line)
+    if not replaced:
+        updated.append(replacement)
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.tmp")
+    temporary.write_text("\n".join(updated) + "\n", encoding="utf-8")
+    temporary.chmod(0o600)
+    temporary.replace(target)
+    target.chmod(0o600)
+
+
 def load_secret_export(path: str | Path) -> SecretConfig:
     source = Path(path)
     try:
