@@ -7,6 +7,7 @@ from arthabot.common import Direction
 from arthabot.data import MarketSnapshot
 from arthabot.execution import ExecutionEngine
 from arthabot.live_feed import Tick
+from arthabot.position_tracker import PositionTracker
 from arthabot.provider_paper_loop import ProviderBackedPaperLoop
 from arthabot.risk import RiskConfig, RiskEngine, TradeProposal
 from arthabot.runtime_market_provider import RuntimeMarketSnapshotProvider, RuntimeStrategyCandidateComposer
@@ -36,6 +37,7 @@ def make_pipeline(tmp_path, *, calls: list[str] | None = None) -> PaperRuntimePi
             ),
         )
 
+    broker_calc = BrokerageCalculator(BrokerageConfig())
     return PaperRuntimePipeline(
         trading_date=date(2026, 1, 5),
         starting_capital=Decimal("5000"),
@@ -50,11 +52,15 @@ def make_pipeline(tmp_path, *, calls: list[str] | None = None) -> PaperRuntimePi
                 quote_max_age_seconds=3,
                 square_off_time="15:15",
             ),
-            brokerage=BrokerageCalculator(BrokerageConfig()),
+            brokerage=broker_calc,
         ),
         hermes=HermesAdapter(proposal_factory=proposal_factory),
         audit=JsonlAuditStore(tmp_path / "audit.jsonl"),
         max_tick_age_seconds=3,
+        position_tracker=PositionTracker(
+            starting_capital=Decimal("5000"),
+            brokerage=broker_calc,
+        ),
     )
 
 
@@ -131,7 +137,7 @@ def test_provider_backed_paper_loop_processes_signals_after_provider_jobs_pass(t
     assert len(result.job_results) == 1
     assert len(result.signal_results) == 1
     assert result.signal_results[0] is not None
-    assert pipeline.daily_report().summarize()["accepted_trades"] == 1
+    assert pipeline.daily_report()["accepted_trades"] == 1
 
 
 def test_provider_backed_paper_loop_accepts_configured_runtime_strategy_candidates(tmp_path):
@@ -217,4 +223,4 @@ def test_provider_backed_paper_loop_uses_top_mover_composer_candidates(tmp_path)
 
     assert not result.must_stop_trading
     assert result.signal_results[0] is not None
-    assert pipeline.daily_report().summarize()["accepted_trades"] == 1
+    assert pipeline.daily_report()["accepted_trades"] == 1

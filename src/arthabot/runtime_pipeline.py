@@ -10,6 +10,7 @@ from arthabot.common import Mode
 from arthabot.execution import ExecutionEngine, OrderResult
 from arthabot.live_feed import LiveFeedMonitor, Tick
 from arthabot.paper_session import PaperSession, PaperTradeIntent
+from arthabot.position_tracker import PositionTracker
 from arthabot.risk import RiskEngine, TradeProposal
 from arthabot.strategies import TradeCandidate
 
@@ -33,6 +34,7 @@ class PaperRuntimePipeline:
         hermes: HermesAdapter,
         audit: JsonlAuditStore,
         max_tick_age_seconds: int,
+        position_tracker: PositionTracker,
     ) -> None:
         self.feed = LiveFeedMonitor(max_tick_age_seconds=max_tick_age_seconds)
         self.session = PaperSession(
@@ -43,12 +45,28 @@ class PaperRuntimePipeline:
         self.risk = risk
         self.hermes = hermes
         self.audit = audit
-        self.available_capital = starting_capital
-        self.trades_today = 0
-        self.open_symbols: set[str] = set()
+        self.tracker = position_tracker
 
     def on_tick(self, tick: Tick) -> None:
         self.feed.record_tick(tick)
+        exit_event = self.tracker.on_tick(
+            symbol=tick.symbol, price=tick.price, now=tick.timestamp,
+        )
+        if exit_event is not None:
+            self.session.record_exit(exit_event)
+            self.audit.append(
+                event_type="position_closed",
+                payload={
+                    "symbol": exit_event.symbol,
+                    "direction": exit_event.direction.value,
+                    "entry_price": str(exit_event.entry_price),
+                    "exit_price": str(exit_event.exit_price),
+                    "quantity": exit_event.quantity,
+                    "net_pnl": str(exit_event.net_pnl),
+                    "total_costs": str(exit_event.total_costs),
+                    "reason": exit_event.reason,
+                },
+            )
 
     def process_candidate(self, candidate: TradeCandidate, *, now: datetime) -> OrderResult | None:
         health = self.feed.health(candidate.symbol, now=now)
@@ -69,14 +87,15 @@ class PaperRuntimePipeline:
             },
         )
         tick = self.feed.latest_tick(candidate.symbol)
+        snapshot = self.tracker.snapshot()
         decision = self.risk.evaluate(
             proposal=proposal,
             quote=tick,
             mode=Mode.PAPER,
-            available_capital=self.available_capital,
-            daily_realized_pnl=Decimal("0"),
-            trades_today=self.trades_today,
-            open_symbols=self.open_symbols,
+            available_capital=snapshot.available_capital,
+            daily_realized_pnl=snapshot.daily_realized_pnl,
+            trades_today=snapshot.trades_today,
+            open_symbols=snapshot.open_symbols,
             now=now,
         )
         if not decision.approved:
@@ -86,6 +105,15 @@ class PaperRuntimePipeline:
                 payload={"symbol": candidate.symbol, "reason_code": decision.reason_code},
             )
             return None
+        self.tracker.open_position(
+            symbol=candidate.symbol,
+            direction=candidate.direction,
+            entry_price=proposal.entry_price,
+            quantity=decision.quantity,
+            stop_loss=proposal.stop_loss,
+            trailing_stop_step=proposal.trailing_stop_step,
+            now=now,
+        )
         self.audit.append(
             event_type="risk_approved",
             payload={"symbol": candidate.symbol, "quantity": decision.quantity},
@@ -100,7 +128,6 @@ class PaperRuntimePipeline:
                 total_costs=decision.estimated_total_costs,
             )
         )
-        self.trades_today += 1
         self.audit.append(
             event_type="paper_signal_executed",
             payload={"symbol": candidate.symbol, "order_id": result.order_id, "simulated": result.simulated},
@@ -108,4 +135,11 @@ class PaperRuntimePipeline:
         return result
 
     def daily_report(self):
-        return self.session.daily_report()
+        session_report = self.session.daily_report()
+        snapshot = self.tracker.snapshot()
+        report = session_report.summarize()
+        report["available_capital"] = snapshot.available_capital
+        report["daily_realized_pnl"] = snapshot.daily_realized_pnl
+        report["unrealized_pnl"] = Decimal("0")  # computed separately with live prices
+        report["open_positions"] = len(snapshot.open_positions)
+        return report

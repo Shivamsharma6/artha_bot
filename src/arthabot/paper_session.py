@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from arthabot.common import Direction, Mode
 from arthabot.execution import ExecutionEngine, OrderIntent, OrderResult
+from arthabot.position_tracker import ExitEvent
 from arthabot.reporting import DailyReport, TradeRecord
 
 
@@ -51,6 +52,17 @@ class PaperSession:
     def reject(self, *, symbol: str, reason: str) -> None:
         self._trades.append(TradeRecord(symbol=symbol, gross_pnl=Decimal("0"), total_costs=Decimal("0"), accepted=False))
         return None
+
+    def record_exit(self, exit_event: ExitEvent) -> None:
+        for idx, trade in enumerate(self._trades):
+            if trade.symbol == exit_event.symbol and trade.accepted:
+                self._trades[idx] = TradeRecord(
+                    symbol=exit_event.symbol,
+                    gross_pnl=exit_event.gross_pnl,
+                    total_costs=exit_event.total_costs,
+                    accepted=True,
+                )
+                break
 
     def restore_trades(self, trades: list[TradeRecord]) -> None:
         if self._trades:

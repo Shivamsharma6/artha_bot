@@ -6,6 +6,7 @@ from decimal import Decimal, localcontext
 
 from arthabot.brokerage import BrokerageCalculator, TradeSide
 from arthabot.common import Direction
+from arthabot.trailing_stop import TrailingStopPolicy, TrailingStopState
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,7 @@ class BacktestTrade:
     rejected: bool
     entry_time_label: str = "unknown"
     entry_timestamp: datetime | None = None
+    exit_reason: str = "unknown"
 
     @property
     def net_pnl(self) -> Decimal:
@@ -221,12 +223,55 @@ class BacktestSignal:
     entry_price: Decimal
     exit_price: Decimal
     quantity: int
+    stop_loss: Decimal = Decimal("0")
+    trailing_stop_step: Decimal = Decimal("0")
+    candles: tuple[Candle, ...] = ()
 
 
 class BacktestExecutionEngine:
-    def __init__(self, *, starting_capital: Decimal, brokerage: BrokerageCalculator) -> None:
+    def __init__(
+        self,
+        *,
+        starting_capital: Decimal,
+        brokerage: BrokerageCalculator,
+        trailing_policy: TrailingStopPolicy | None = None,
+    ) -> None:
         self.starting_capital = starting_capital
         self.brokerage = brokerage
+        self.trailing_policy = trailing_policy
+
+    def _simulate_stops(self, signal: BacktestSignal) -> tuple[Decimal, str]:
+        if not signal.candles or signal.stop_loss <= 0:
+            return signal.exit_price, "target"
+
+        current_stop = signal.stop_loss
+        trailing_state = None
+
+        for candle in signal.candles:
+            if signal.direction == Direction.LONG and candle.low <= current_stop:
+                return current_stop, "stop_loss"
+            if signal.direction == Direction.SHORT and candle.high >= current_stop:
+                return current_stop, "stop_loss"
+
+            if signal.trailing_stop_step > 0 and self.trailing_policy is not None:
+                if trailing_state is None:
+                    trailing_state = TrailingStopState(
+                        symbol=signal.symbol,
+                        direction=signal.direction,
+                        current_stop=current_stop,
+                        last_reference_price=candle.close,
+                        last_modified_at=candle.timestamp,
+                        modifications=0,
+                    )
+                else:
+                    updated = self.trailing_policy.propose_update(
+                        trailing_state, price=candle.close, now=candle.timestamp,
+                    )
+                    if updated is not None:
+                        trailing_state = updated
+                        current_stop = updated.current_stop
+
+        return signal.exit_price, "target"
 
     def run(self, signals: list[BacktestSignal]) -> BacktestReport:
         trades: list[BacktestTrade] = []
@@ -235,37 +280,31 @@ class BacktestExecutionEngine:
             if signal.quantity <= 0:
                 trades.append(
                     BacktestTrade(
-                        symbol=signal.symbol,
-                        direction=signal.direction,
-                        entry_date=signal.entry_date,
-                        exit_date=signal.entry_date,
-                        gross_pnl=Decimal("0"),
-                        total_costs=Decimal("0"),
-                        rejected=True,
-                        entry_time_label="unknown",
+                        symbol=signal.symbol, direction=signal.direction,
+                        entry_date=signal.entry_date, exit_date=signal.entry_date,
+                        gross_pnl=Decimal("0"), total_costs=Decimal("0"),
+                        rejected=True, entry_time_label="unknown",
+                        exit_reason="rejected",
                     )
                 )
                 continue
             if signal.entry_price <= 0 or signal.exit_price <= 0:
                 missed += 1
                 continue
+
+            exit_price, exit_label = self._simulate_stops(signal)
             side = TradeSide.LONG if signal.direction == Direction.LONG else TradeSide.SHORT
             costs = self.brokerage.estimate_intraday_equity(
-                side=side,
-                entry_price=signal.entry_price,
-                exit_price=signal.exit_price,
-                quantity=signal.quantity,
+                side=side, entry_price=signal.entry_price,
+                exit_price=exit_price, quantity=signal.quantity,
             )
             trades.append(
                 BacktestTrade(
-                    symbol=signal.symbol,
-                    direction=signal.direction,
-                    entry_date=signal.entry_date,
-                    exit_date=signal.entry_date,
-                    gross_pnl=costs.gross_pnl,
-                    total_costs=costs.total_charges,
-                    rejected=False,
-                    entry_time_label="unknown",
+                    symbol=signal.symbol, direction=signal.direction,
+                    entry_date=signal.entry_date, exit_date=signal.entry_date,
+                    gross_pnl=costs.gross_pnl, total_costs=costs.total_charges,
+                    rejected=False, entry_time_label="unknown",
+                    exit_reason=exit_label,
                 )
             )
         report = BacktestAccounting(starting_capital=self.starting_capital).summarize(trades)

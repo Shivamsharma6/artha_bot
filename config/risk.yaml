@@ -6,4 +6,8 @@ max_trades_per_day: 3
 quote_max_age_seconds: 15
 square_off_time: "15:15"
 leverage_allowed: false
+trailing_stop_enabled: true
+trailing_stop_step: "0.5"
+trailing_stop_cooldown_seconds: 30
+trailing_stop_max_modifications: 5
 

@@ -17,12 +17,14 @@ from arthabot.execution import ExecutionEngine
 from arthabot.http_clients import ZerodhaHttpClient, UrllibHttpTransport
 from arthabot.instruments import InstrumentTokenCache, InstrumentTokenStore
 from arthabot.live_feed import ZerodhaWebSocketFeedClient, FeedReconnectController, LiveFeedSupervisor
+from arthabot.position_tracker import PositionTracker
 from arthabot.risk import RiskConfig, RiskEngine, TradeProposal
 from arthabot.runtime_market_provider import RuntimeMarketSnapshotProvider, RuntimeStrategyCandidateComposer
 from arthabot.runtime_pipeline import HermesAdapter, PaperRuntimePipeline
 from arthabot.runtime_strategy_provider import load_runtime_strategy_config
 from arthabot.secrets import SecretConfig, load_access_token_file
 from arthabot.top_movers import KiteTopMoversClient
+from arthabot.trailing_stop import TrailingStopPolicy
 from arthabot.dashboard_api import (
     DashboardZerodhaAuth,
     app,
@@ -122,6 +124,7 @@ def main(argv: list[str] | None = None) -> int:
         return hold_degraded_dashboard("KITE_REAUTH_REQUIRED")
     
     execution = ExecutionEngine()
+    brokerage_calc = BrokerageCalculator(BrokerageConfig())
     risk = RiskEngine(
         config=RiskConfig(
             starting_capital=runtime_config.risk.starting_capital,
@@ -132,7 +135,21 @@ def main(argv: list[str] | None = None) -> int:
             quote_max_age_seconds=runtime_config.risk.quote_max_age_seconds,
             square_off_time=runtime_config.risk.square_off_time,
         ),
-        brokerage=BrokerageCalculator(BrokerageConfig())
+        brokerage=brokerage_calc,
+    )
+
+    trailing_policy = None
+    if runtime_config.risk.trailing_stop_enabled:
+        trailing_policy = TrailingStopPolicy(
+            step=runtime_config.risk.trailing_stop_step,
+            cooldown_seconds=runtime_config.risk.trailing_stop_cooldown_seconds,
+            max_modifications_per_trade=runtime_config.risk.trailing_stop_max_modifications,
+        )
+
+    position_tracker = PositionTracker(
+        starting_capital=runtime_config.risk.starting_capital,
+        brokerage=brokerage_calc,
+        trailing_policy=trailing_policy,
     )
 
     latest_entry_prices: dict[str, Decimal] = {}
@@ -152,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
         hermes=HermesAdapter(proposal_factory=proposal_factory),
         audit=audit,
         max_tick_age_seconds=runtime_config.risk.quote_max_age_seconds,
+        position_tracker=position_tracker,
     )
     restored_trades = deserialize_trades(restored_runtime_state.get("trades"))
     pipeline.session.restore_trades(restored_trades)

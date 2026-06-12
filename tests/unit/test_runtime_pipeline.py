@@ -6,12 +6,14 @@ from arthabot.brokerage import BrokerageCalculator, BrokerageConfig
 from arthabot.common import Direction
 from arthabot.execution import ExecutionEngine
 from arthabot.live_feed import Tick
+from arthabot.position_tracker import PositionTracker
 from arthabot.risk import RiskConfig, RiskEngine, TradeProposal
 from arthabot.runtime_pipeline import HermesAdapter, PaperRuntimePipeline
 from arthabot.strategies import TradeCandidate
 
 
 def make_pipeline(tmp_path) -> PaperRuntimePipeline:
+    broker_calc = BrokerageCalculator(BrokerageConfig())
     return PaperRuntimePipeline(
         trading_date=date(2026, 1, 5),
         starting_capital=Decimal("5000"),
@@ -26,7 +28,7 @@ def make_pipeline(tmp_path) -> PaperRuntimePipeline:
                 quote_max_age_seconds=3,
                 square_off_time="15:15",
             ),
-            brokerage=BrokerageCalculator(BrokerageConfig()),
+            brokerage=broker_calc,
         ),
         hermes=HermesAdapter(
             proposal_factory=lambda candidate, now: TradeProposal(
@@ -43,6 +45,10 @@ def make_pipeline(tmp_path) -> PaperRuntimePipeline:
         ),
         audit=JsonlAuditStore(tmp_path / "audit.jsonl"),
         max_tick_age_seconds=3,
+        position_tracker=PositionTracker(
+            starting_capital=Decimal("5000"),
+            brokerage=broker_calc,
+        ),
     )
 
 
@@ -63,7 +69,7 @@ def test_paper_runtime_pipeline_executes_fresh_strategy_candidate(tmp_path):
 
     assert result is not None
     assert result.simulated
-    assert pipeline.daily_report().summarize()["accepted_trades"] == 1
+    assert pipeline.daily_report()["accepted_trades"] == 1
     assert [event.event_type for event in pipeline.audit.read_all()] == [
         "decision",
         "risk_approved",
@@ -87,6 +93,6 @@ def test_paper_runtime_pipeline_audits_risk_rejection_for_stale_quote(tmp_path):
     )
 
     assert result is None
-    assert pipeline.daily_report().summarize()["rejected_trades"] == 1
+    assert pipeline.daily_report()["rejected_trades"] == 1
     assert pipeline.audit.read_all()[-1].payload["reason_code"] == "STALE_TICK"
 

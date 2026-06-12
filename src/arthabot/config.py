@@ -27,6 +27,10 @@ class RuntimeRiskConfig:
     quote_max_age_seconds: int
     square_off_time: str
     leverage_allowed: bool
+    trailing_stop_enabled: bool
+    trailing_stop_step: Decimal
+    trailing_stop_cooldown_seconds: int
+    trailing_stop_max_modifications: int
 
 
 @dataclass(frozen=True)
@@ -47,16 +51,20 @@ def load_runtime_config(config_dir: str | Path) -> RuntimeConfig:
     risk = _read_yaml(root / "risk.yaml")
     mode = _read_yaml(root / "modes.yaml")
     runtime = RuntimeConfig(
-        risk=RuntimeRiskConfig(
-            starting_capital=Decimal(str(risk["starting_capital"])),
-            max_risk_per_trade_pct=Decimal(str(risk["max_risk_per_trade_pct"])),
-            max_daily_loss_pct=Decimal(str(risk["max_daily_loss_pct"])),
-            min_allocation_pct=Decimal(str(risk["min_allocation_pct"])),
-            max_trades_per_day=int(risk["max_trades_per_day"]),
-            quote_max_age_seconds=int(risk["quote_max_age_seconds"]),
-            square_off_time=str(risk["square_off_time"]),
-            leverage_allowed=bool(risk["leverage_allowed"]),
-        ),
+            risk=RuntimeRiskConfig(
+                starting_capital=Decimal(str(risk["starting_capital"])),
+                max_risk_per_trade_pct=Decimal(str(risk["max_risk_per_trade_pct"])),
+                max_daily_loss_pct=Decimal(str(risk["max_daily_loss_pct"])),
+                min_allocation_pct=Decimal(str(risk["min_allocation_pct"])),
+                max_trades_per_day=int(risk["max_trades_per_day"]),
+                quote_max_age_seconds=int(risk["quote_max_age_seconds"]),
+                square_off_time=str(risk["square_off_time"]),
+                leverage_allowed=bool(risk["leverage_allowed"]),
+                trailing_stop_enabled=bool(risk.get("trailing_stop_enabled", False)),
+                trailing_stop_step=Decimal(str(risk.get("trailing_stop_step", "0"))),
+                trailing_stop_cooldown_seconds=int(risk.get("trailing_stop_cooldown_seconds", 30)),
+                trailing_stop_max_modifications=int(risk.get("trailing_stop_max_modifications", 5)),
+            ),
         mode=RuntimeModeConfig(
             default_mode=Mode(str(mode["default_mode"])),
             live_enabled=bool(mode["live_enabled"]),
