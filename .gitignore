@@ -16,3 +16,5 @@ reports/
 artifacts/
 *-image.tar
 .superpowers/brainstorm/
+.DS_Store
+.coverage
