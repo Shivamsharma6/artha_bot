@@ -75,6 +75,13 @@ def load_runtime_config(config_dir: str | Path) -> RuntimeConfig:
         raise ValueError("default mode must not be LIVE")
     if runtime.risk.leverage_allowed:
         raise ValueError("leverage must remain disabled in the current version")
+    if runtime.risk.trailing_stop_enabled:
+        if runtime.risk.trailing_stop_step <= 0:
+            raise ValueError("trailing stop step must be positive")
+        if runtime.risk.trailing_stop_cooldown_seconds < 0:
+            raise ValueError("trailing stop cooldown must not be negative")
+        if runtime.risk.trailing_stop_max_modifications <= 0:
+            raise ValueError("trailing stop max modifications must be positive")
     return runtime
 
 

@@ -161,6 +161,18 @@ def main(argv: list[str] | None = None) -> int:
             entry=latest_entry_prices[candidate.symbol],
         )
 
+    pipeline = None
+
+    def persist_pipeline_state() -> None:
+        if pipeline is None:
+            return
+        payload = runtime_state_store.load_or_default()
+        payload.update(
+            trades=serialize_trades(list(pipeline.session.trades)),
+            tracker_state=pipeline.tracker.export_state(),
+        )
+        broadcast_update(payload)
+
     pipeline = PaperRuntimePipeline(
         trading_date=datetime.now().date(),
         starting_capital=runtime_config.risk.starting_capital,
@@ -170,10 +182,35 @@ def main(argv: list[str] | None = None) -> int:
         audit=audit,
         max_tick_age_seconds=runtime_config.risk.quote_max_age_seconds,
         position_tracker=position_tracker,
+        state_changed=persist_pipeline_state,
     )
-    restored_trades = deserialize_trades(restored_runtime_state.get("trades"))
+    restored_timestamp = restored_runtime_state.get("timestamp")
+    restored_for_today = False
+    if isinstance(restored_timestamp, str):
+        try:
+            restored_for_today = datetime.fromisoformat(restored_timestamp).date() == datetime.now().date()
+        except ValueError:
+            restored_for_today = False
+    restored_trades = deserialize_trades(restored_runtime_state.get("trades")) if restored_for_today else []
     pipeline.session.restore_trades(restored_trades)
-    pipeline.trades_today = sum(1 for trade in restored_trades if trade.accepted)
+    tracker_state = restored_runtime_state.get("tracker_state")
+    if isinstance(tracker_state, dict):
+        pipeline.tracker.restore(tracker_state)
+        if not restored_for_today:
+            if pipeline.tracker.snapshot().open_positions:
+                audit.append(
+                    event_type="stale_open_positions_detected",
+                    payload={"reason_code": "STALE_OPEN_POSITIONS", "must_stop_trading": True},
+                )
+                return hold_degraded_dashboard("STALE_OPEN_POSITIONS")
+            pipeline.tracker.start_new_day()
+    elif restored_trades:
+        pipeline.tracker.restore({
+            "available_capital": str(runtime_config.risk.starting_capital),
+            "daily_realized_pnl": "0",
+            "trades_today": sum(1 for trade in restored_trades if trade.accepted),
+            "positions": [],
+        })
 
     zerodha_client = ZerodhaHttpClient(
         secret_config=secrets,
@@ -232,6 +269,7 @@ def main(argv: list[str] | None = None) -> int:
         monitor=pipeline.feed, 
         ticker_factory=lambda key, tok: KiteTicker(key, tok),
         token_to_symbol=token_to_symbol,
+        tick_handler=pipeline.on_tick,
     )
 
     reconnect_controller = FeedReconnectController(base_delay_seconds=2, max_delay_seconds=60, max_failures=10)
@@ -260,12 +298,52 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     logging.info("Paper trading loop started. Press Ctrl+C to stop.")
+    square_off_completed = False
     try:
         while True:
             time.sleep(args.interval_seconds)
             now = datetime.now()
 
+            if now.date() != pipeline.session.trading_date:
+                pipeline.start_new_day(now.date())
+                square_off_completed = False
+
             if now.time() >= square_off_time:
+                if not square_off_completed:
+                    try:
+                        pipeline.square_off(now=now)
+                        square_off_completed = True
+                        snapshot = pipeline.tracker.snapshot()
+                        accepted = [trade for trade in pipeline.session.trades if trade.accepted]
+                        realized_pnl = snapshot.daily_realized_pnl
+                        broadcast_update({
+                            "type": "MARKET_TICK",
+                            "timestamp": now.isoformat(),
+                            "open_positions": 0,
+                            "pnl": float(realized_pnl),
+                            "win_rate": float(
+                                sum(1 for trade in accepted if trade.net_pnl > 0) / len(accepted) * 100
+                            ) if accepted else 0.0,
+                            "total_trades": len(accepted),
+                            "capital": float(snapshot.available_capital),
+                            "starting_capital": float(pipeline.session.starting_capital),
+                            "daily_loss_limit": float(
+                                snapshot.available_capital * runtime_config.risk.max_daily_loss_pct
+                            ),
+                            "mode": "PAPER",
+                            "positions_list": [],
+                            "candidates": [],
+                            "trades": serialize_trades(list(pipeline.session.trades)),
+                            "tracker_state": pipeline.tracker.export_state(),
+                        })
+                    except RuntimeError as exc:
+                        set_runtime_health(trading_ready=False, reason_code="SQUARE_OFF_PRICE_UNAVAILABLE")
+                        logging.error("Square-off blocked: %s", exc)
+                        audit.append(
+                            event_type="paper_square_off_blocked",
+                            payload={"reason": str(exc), "timestamp": now.isoformat()},
+                        )
+                        continue
                 set_runtime_health(trading_ready=False, reason_code="MARKET_CLOSED")
                 continue
             
@@ -316,12 +394,23 @@ def main(argv: list[str] | None = None) -> int:
             
             # Calculate stats
             accepted_trades = [t for t in pipeline.session.trades if t.accepted]
+            finalized_trades = [t for t in accepted_trades if t.gross_pnl != 0 or t.total_costs != 0]
             total_trades = len(accepted_trades)
-            win_count = sum(1 for t in accepted_trades if (t.gross_pnl - t.total_costs) > 0)
+            win_count = sum(1 for t in finalized_trades if t.net_pnl > 0)
             win_rate = (win_count / total_trades * 100) if total_trades > 0 else 0
-            pnl = sum((t.gross_pnl - t.total_costs) for t in accepted_trades)
-            capital = float(pipeline.session.starting_capital + pnl)
-            positions = [{"symbol": t.symbol, "pnl": float(t.gross_pnl - t.total_costs)} for t in accepted_trades]
+            tracker_snapshot = pipeline.tracker.snapshot(
+                prices={sym: pipeline.feed.latest_tick(sym).price for sym in pipeline.tracker.snapshot().open_symbols}
+            )
+            pnl = tracker_snapshot.daily_realized_pnl + tracker_snapshot.unrealized_pnl
+            capital = float(tracker_snapshot.available_capital + sum(
+                position.entry_price * position.quantity for position in tracker_snapshot.open_positions
+            ) + tracker_snapshot.unrealized_pnl)
+            positions = [{
+                "symbol": position.symbol,
+                "pnl": float((pipeline.feed.latest_tick(position.symbol).price - position.entry_price) * position.quantity)
+                if position.direction.value == "LONG" else
+                float((position.entry_price - pipeline.feed.latest_tick(position.symbol).price) * position.quantity),
+            } for position in tracker_snapshot.open_positions]
 
             # Broadcast the latest state to the dashboard
             broadcast_update({
@@ -340,6 +429,7 @@ def main(argv: list[str] | None = None) -> int:
                 "positions_list": positions,
                 "candidates": [f"{c.symbol} {c.direction.name} {c.strategy_version}" for c in candidates],
                 "trades": serialize_trades(list(pipeline.session.trades)),
+                "tracker_state": pipeline.tracker.export_state(),
             })
 
     except KeyboardInterrupt:

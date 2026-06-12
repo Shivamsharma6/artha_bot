@@ -10,6 +10,7 @@ class TradeRecord:
     gross_pnl: Decimal
     total_costs: Decimal
     accepted: bool
+    trade_id: str = ""
 
     @property
     def net_pnl(self) -> Decimal:
@@ -38,4 +39,3 @@ class DailyReport:
             "rejected_trades": rejected,
             "ending_capital": self.starting_capital + net_pnl,
         }
-

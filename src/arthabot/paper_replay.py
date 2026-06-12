@@ -4,10 +4,12 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
+from uuid import uuid4
 
 from arthabot.common import Direction
 from arthabot.execution import ExecutionEngine
 from arthabot.paper_session import PaperSession, PaperTradeIntent
+from arthabot.position_tracker import ExitEvent
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,7 @@ class ReplayPaperRunner:
                 self.session.reject(symbol=signal.symbol, reason="UNEXECUTABLE_REPLAY_SIGNAL")
                 missed += 1
                 continue
+            trade_id = uuid4().hex
             self.session.submit(
                 PaperTradeIntent(
                     symbol=signal.symbol,
@@ -50,7 +53,19 @@ class ReplayPaperRunner:
                     entry_price=signal.entry_price,
                     exit_price=signal.exit_price,
                     total_costs=signal.total_costs,
+                    trade_id=trade_id,
                 )
             )
+            gross_pnl = (
+                (signal.exit_price - signal.entry_price) * signal.quantity
+                if signal.direction == Direction.LONG
+                else (signal.entry_price - signal.exit_price) * signal.quantity
+            )
+            self.session.record_exit(ExitEvent(
+                trade_id=trade_id, symbol=signal.symbol, direction=signal.direction,
+                entry_price=signal.entry_price, exit_price=signal.exit_price,
+                quantity=signal.quantity, gross_pnl=gross_pnl,
+                total_costs=signal.total_costs, net_pnl=gross_pnl - signal.total_costs,
+                reason="replay_exit", timestamp=signal.timestamp,
+            ))
         return ReplayResult(report=self.session.daily_report().summarize(), missed_trades=missed)
-

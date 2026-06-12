@@ -23,6 +23,14 @@ class TrailingStopPolicy:
     cooldown_seconds: int
     max_modifications_per_trade: int
 
+    def __post_init__(self) -> None:
+        if self.step <= 0:
+            raise ValueError("trailing stop step must be positive")
+        if self.cooldown_seconds < 0:
+            raise ValueError("trailing stop cooldown must not be negative")
+        if self.max_modifications_per_trade <= 0:
+            raise ValueError("trailing stop max modifications must be positive")
+
     def propose_update(
         self,
         state: TrailingStopState,
@@ -56,4 +64,3 @@ class TrailingStopPolicy:
             last_modified_at=now,
             modifications=state.modifications + 1,
         )
-

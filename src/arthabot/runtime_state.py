@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 from decimal import Decimal
+from threading import RLock
 
 from arthabot.reporting import TradeRecord
 
@@ -13,16 +14,19 @@ class RuntimeStateStore:
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
+        self._lock = RLock()
 
     def save(self, payload: dict[str, Any]) -> None:
-        record = {"version": self.VERSION, "payload": payload}
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_name(f".{self.path.name}.tmp")
-        temporary.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
-        temporary.replace(self.path)
+        with self._lock:
+            record = {"version": self.VERSION, "payload": payload}
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.path.with_name(f".{self.path.name}.tmp")
+            temporary.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
+            temporary.replace(self.path)
 
     def load(self) -> dict[str, Any]:
-        record = json.loads(self.path.read_text(encoding="utf-8"))
+        with self._lock:
+            record = json.loads(self.path.read_text(encoding="utf-8"))
         if record.get("version") != self.VERSION:
             raise ValueError("unsupported runtime state version")
         payload = record.get("payload")
@@ -44,6 +48,7 @@ def serialize_trades(trades: list[TradeRecord]) -> list[dict[str, Any]]:
             "gross_pnl": str(trade.gross_pnl),
             "total_costs": str(trade.total_costs),
             "accepted": trade.accepted,
+            "trade_id": trade.trade_id,
         }
         for trade in trades
     ]
@@ -60,6 +65,7 @@ def deserialize_trades(rows: Any) -> list[TradeRecord]:
             gross_pnl=Decimal(str(row["gross_pnl"])),
             total_costs=Decimal(str(row["total_costs"])),
             accepted=bool(row["accepted"]),
+            trade_id=str(row.get("trade_id", "")),
         )
         for row in rows
     ]

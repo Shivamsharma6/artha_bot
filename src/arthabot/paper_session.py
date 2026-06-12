@@ -18,6 +18,7 @@ class PaperTradeIntent:
     entry_price: Decimal
     exit_price: Decimal
     total_costs: Decimal
+    trade_id: str = ""
 
 
 class PaperSession:
@@ -38,13 +39,13 @@ class PaperSession:
             mode=Mode.PAPER,
             risk_approved=True,
         )
-        gross = self._gross_pnl(intent)
         self._trades.append(
             TradeRecord(
                 symbol=intent.symbol,
-                gross_pnl=gross,
-                total_costs=intent.total_costs,
+                gross_pnl=Decimal("0"),
+                total_costs=Decimal("0"),
                 accepted=True,
+                trade_id=intent.trade_id,
             )
         )
         return result
@@ -55,19 +56,31 @@ class PaperSession:
 
     def record_exit(self, exit_event: ExitEvent) -> None:
         for idx, trade in enumerate(self._trades):
-            if trade.symbol == exit_event.symbol and trade.accepted:
+            if trade.trade_id == exit_event.trade_id and trade.accepted:
                 self._trades[idx] = TradeRecord(
                     symbol=exit_event.symbol,
                     gross_pnl=exit_event.gross_pnl,
                     total_costs=exit_event.total_costs,
                     accepted=True,
+                    trade_id=trade.trade_id,
                 )
-                break
+                return
+        raise KeyError(f"trade_id not found in paper ledger: {exit_event.trade_id}")
+
+    def require_trade_ids(self, trade_ids: list[str]) -> None:
+        known = {trade.trade_id for trade in self._trades if trade.accepted}
+        missing = [trade_id for trade_id in trade_ids if trade_id not in known]
+        if missing:
+            raise KeyError(f"trade_id not found in paper ledger: {', '.join(missing)}")
 
     def restore_trades(self, trades: list[TradeRecord]) -> None:
         if self._trades:
             raise RuntimeError("paper trade ledger can only be restored into an empty session")
         self._trades = list(trades)
+
+    def start_new_day(self, trading_date: date) -> None:
+        self.trading_date = trading_date
+        self._trades = []
 
     @property
     def trades(self) -> tuple[TradeRecord, ...]:

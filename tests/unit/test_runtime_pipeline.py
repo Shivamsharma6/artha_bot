@@ -1,5 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import pytest
 
 from arthabot.audit_store import JsonlAuditStore
 from arthabot.brokerage import BrokerageCalculator, BrokerageConfig
@@ -96,3 +97,67 @@ def test_paper_runtime_pipeline_audits_risk_rejection_for_stale_quote(tmp_path):
     assert pipeline.daily_report()["rejected_trades"] == 1
     assert pipeline.audit.read_all()[-1].payload["reason_code"] == "STALE_TICK"
 
+
+def test_square_off_closes_positions_using_fresh_ticks(tmp_path):
+    pipeline = make_pipeline(tmp_path)
+    now = datetime(2026, 1, 5, 10, 0, tzinfo=timezone.utc)
+    pipeline.on_tick(Tick(symbol="INFY", price=Decimal("100"), volume=1000, timestamp=now))
+    pipeline.process_candidate(TradeCandidate(
+        symbol="INFY", direction=Direction.LONG, score=Decimal("1"), rationale="test",
+    ), now=now)
+    later = datetime(2026, 1, 5, 15, 15, tzinfo=timezone.utc)
+    pipeline.on_tick(Tick(symbol="INFY", price=Decimal("101"), volume=1000, timestamp=later))
+
+    events = pipeline.square_off(now=later)
+
+    assert len(events) == 1
+    assert events[0].reason == "square_off"
+    assert pipeline.tracker.snapshot().open_positions == ()
+
+
+def test_square_off_fails_closed_without_fresh_price(tmp_path):
+    pipeline = make_pipeline(tmp_path)
+    now = datetime(2026, 1, 5, 10, 0, tzinfo=timezone.utc)
+    pipeline.on_tick(Tick(symbol="INFY", price=Decimal("100"), volume=1000, timestamp=now))
+    pipeline.process_candidate(TradeCandidate(
+        symbol="INFY", direction=Direction.LONG, score=Decimal("1"), rationale="test",
+    ), now=now)
+
+    with pytest.raises(RuntimeError, match="fresh price"):
+        pipeline.square_off(now=datetime(2026, 1, 5, 15, 15, tzinfo=timezone.utc))
+
+
+def test_start_new_day_resets_ledger_and_risk_state_after_positions_are_closed(tmp_path):
+    pipeline = make_pipeline(tmp_path)
+    pipeline.start_new_day(date(2026, 1, 6))
+    assert pipeline.session.trading_date == date(2026, 1, 6)
+    assert pipeline.session.trades == ()
+    snapshot = pipeline.tracker.snapshot()
+    assert snapshot.available_capital == Decimal("5000")
+    assert snapshot.trades_today == 0
+
+
+def test_start_new_day_refuses_to_drop_open_positions(tmp_path):
+    pipeline = make_pipeline(tmp_path)
+    now = datetime(2026, 1, 5, 10, 0, tzinfo=timezone.utc)
+    pipeline.on_tick(Tick(symbol="INFY", price=Decimal("100"), volume=1000, timestamp=now))
+    pipeline.process_candidate(TradeCandidate(
+        symbol="INFY", direction=Direction.LONG, score=Decimal("1"), rationale="test",
+    ), now=now)
+    with pytest.raises(RuntimeError, match="open positions"):
+        pipeline.start_new_day(date(2026, 1, 6))
+
+
+def test_execution_failure_does_not_reserve_capital_or_open_position(tmp_path):
+    pipeline = make_pipeline(tmp_path)
+    now = datetime(2026, 1, 5, 10, 0, tzinfo=timezone.utc)
+    pipeline.on_tick(Tick(symbol="INFY", price=Decimal("100"), volume=1000, timestamp=now))
+    pipeline.session.execution.submit = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("execution failed"))
+    with pytest.raises(RuntimeError, match="execution failed"):
+        pipeline.process_candidate(TradeCandidate(
+            symbol="INFY", direction=Direction.LONG, score=Decimal("1"), rationale="test",
+        ), now=now)
+    snapshot = pipeline.tracker.snapshot()
+    assert snapshot.available_capital == Decimal("5000")
+    assert snapshot.open_positions == ()
+    assert pipeline.session.trades == ()

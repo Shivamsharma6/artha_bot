@@ -31,7 +31,7 @@ def test_paper_session_records_simulated_fills_and_daily_report():
     assert result.simulated
     assert execution.real_orders_submitted == []
     assert report["accepted_trades"] == 1
-    assert report["net_pnl"] == Decimal("2.50")
+    assert report["net_pnl"] == Decimal("0")
 
 
 def test_paper_session_records_rejected_trade_without_execution():

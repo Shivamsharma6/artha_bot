@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal, localcontext
 
 from arthabot.brokerage import BrokerageCalculator, TradeSide
@@ -246,30 +246,37 @@ class BacktestExecutionEngine:
 
         current_stop = signal.stop_loss
         trailing_state = None
+        trade_policy = None
+        if signal.trailing_stop_step > 0 and self.trailing_policy is not None:
+            trade_policy = TrailingStopPolicy(
+                step=signal.trailing_stop_step,
+                cooldown_seconds=self.trailing_policy.cooldown_seconds,
+                max_modifications_per_trade=self.trailing_policy.max_modifications_per_trade,
+            )
+            trailing_state = TrailingStopState(
+                symbol=signal.symbol,
+                direction=signal.direction,
+                current_stop=current_stop,
+                last_reference_price=signal.entry_price,
+                last_modified_at=signal.candles[0].timestamp - timedelta(
+                    seconds=trade_policy.cooldown_seconds
+                ),
+                modifications=0,
+            )
 
         for candle in signal.candles:
             if signal.direction == Direction.LONG and candle.low <= current_stop:
-                return current_stop, "stop_loss"
+                return (candle.open if candle.open <= current_stop else current_stop), "stop_loss"
             if signal.direction == Direction.SHORT and candle.high >= current_stop:
-                return current_stop, "stop_loss"
+                return (candle.open if candle.open >= current_stop else current_stop), "stop_loss"
 
-            if signal.trailing_stop_step > 0 and self.trailing_policy is not None:
-                if trailing_state is None:
-                    trailing_state = TrailingStopState(
-                        symbol=signal.symbol,
-                        direction=signal.direction,
-                        current_stop=current_stop,
-                        last_reference_price=candle.close,
-                        last_modified_at=candle.timestamp,
-                        modifications=0,
-                    )
-                else:
-                    updated = self.trailing_policy.propose_update(
-                        trailing_state, price=candle.close, now=candle.timestamp,
-                    )
-                    if updated is not None:
-                        trailing_state = updated
-                        current_stop = updated.current_stop
+            if trailing_state is not None and trade_policy is not None:
+                updated = trade_policy.propose_update(
+                    trailing_state, price=candle.close, now=candle.timestamp,
+                )
+                if updated is not None:
+                    trailing_state = updated
+                    current_stop = updated.current_stop
 
         return signal.exit_price, "target"
 

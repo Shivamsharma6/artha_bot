@@ -159,6 +159,28 @@ def test_zerodha_websocket_feed_subscribes_and_records_ticks():
     )
 
 
+def test_zerodha_websocket_feed_routes_ticks_through_injected_handler():
+    ticker = FakeTicker()
+    monitor = LiveFeedMonitor(max_tick_age_seconds=3)
+    received = []
+    now = datetime(2026, 1, 5, 10, 0, tzinfo=timezone.utc)
+    client = ZerodhaWebSocketFeedClient(
+        secret_config=SecretConfig("key", "secret", "token"),
+        monitor=monitor,
+        ticker_factory=lambda api_key, access_token: ticker,
+        token_to_symbol={123: "INFY"},
+        tick_handler=received.append,
+    )
+    client.connect(tokens=[123])
+    ticker.on_ticks(ticker, [{
+        "instrument_token": 123, "last_price": 98, "volume_traded": 10,
+        "exchange_timestamp": now,
+    }])
+
+    assert [tick.price for tick in received] == [Decimal("98")]
+    assert monitor.health("INFY", now=now).reason_code == "MISSING_TICK"
+
+
 def test_zerodha_websocket_feed_forwards_order_updates_and_tracks_stop_state():
     ticker = FakeTicker()
     updates = []

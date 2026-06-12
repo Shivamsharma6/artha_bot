@@ -172,6 +172,7 @@ class ZerodhaWebSocketFeedClient:
         monitor: LiveFeedMonitor,
         ticker_factory: TickerFactory,
         token_to_symbol: dict[int, str],
+        tick_handler: Callable[[Tick], Any] | None = None,
         order_update_handler: Callable[[dict[str, Any]], Any] | None = None,
     ) -> None:
         if not secret_config.has_zerodha_credentials:
@@ -180,6 +181,7 @@ class ZerodhaWebSocketFeedClient:
         self.monitor = monitor
         self.ticker_factory = ticker_factory
         self.token_to_symbol = dict(token_to_symbol)
+        self.tick_handler = tick_handler
         self.order_update_handler = order_update_handler
         self.last_order_update_result: Any | None = None
         self.ticker: Any | None = None
@@ -223,14 +225,16 @@ class ZerodhaWebSocketFeedClient:
             volume = raw_tick.get("volume_traded", raw_tick.get("volume"))
             if volume is None:
                 raise ValueError("tick volume is required")
-            self.monitor.record_tick(
-                Tick(
-                    symbol=symbol,
-                    price=Decimal(str(raw_tick["last_price"])),
-                    volume=int(volume),
-                    timestamp=timestamp,
-                )
+            tick = Tick(
+                symbol=symbol,
+                price=Decimal(str(raw_tick["last_price"])),
+                volume=int(volume),
+                timestamp=timestamp,
             )
+            if self.tick_handler is None:
+                self.monitor.record_tick(tick)
+            else:
+                self.tick_handler(tick)
 
     def _on_order_update(self, ticker, update: dict[str, Any]) -> None:
         if self.order_update_handler is None:
