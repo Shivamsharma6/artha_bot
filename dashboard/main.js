@@ -104,14 +104,20 @@ async function refreshRuntimeHealth() {
         const response = await fetch('/api/health', { cache: 'no-store' });
         const health = await response.json();
         const authSection = document.querySelector('.broker-auth');
+        
+        // Only show auth panel if explicitly missing token or requires reauth
+        const isAuthError = ['KITE_REAUTH_REQUIRED', 'MISSING_ZERODHA_TOKEN', 'ZERODHA_SESSION_EXPIRED', 'ZERODHA_TOKEN_INVALID', 'STARTING'].includes(health.reason_code);
+
         if (health.trading_ready) {
             statusEl.textContent = 'Connected (PAPER)';
             statusEl.className = 'status connected';
             if (authSection) authSection.style.display = 'none';
         } else {
-            statusEl.textContent = 'Connected (PAPER, degraded)';
+            statusEl.textContent = `Connected (PAPER, degraded: ${health.reason_code || 'unknown'})`;
             statusEl.className = 'status disconnected';
-            if (authSection) authSection.style.display = 'block';
+            if (authSection) {
+                authSection.style.display = isAuthError ? 'block' : 'none';
+            }
         }
     } catch (error) {
         statusEl.textContent = 'Connected (health unavailable)';
