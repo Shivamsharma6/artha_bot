@@ -24,6 +24,15 @@ def test_websocket_broadcast():
             assert data["value"] == 1500
 
 
+def test_websocket_accepts_client_heartbeat_without_disconnect():
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws") as websocket:
+            assert websocket.receive_json()["type"] == "P_AND_L_UPDATE"
+            websocket.send_text("ping")
+            broadcast_update({"type": "HEARTBEAT_TEST"})
+            assert websocket.receive_json()["type"] == "HEARTBEAT_TEST"
+
+
 def test_health_reports_trading_readiness_separately_from_liveness():
     set_runtime_health(trading_ready=False, reason_code="KITE_AUTHENTICATION_FAILED")
 
@@ -53,6 +62,20 @@ def test_dashboard_restores_last_persisted_runtime_state(tmp_path):
     assert response.json()["total_trades"] == 3
 
 
+def test_websocket_sends_last_persisted_state_immediately(tmp_path):
+    store = RuntimeStateStore(tmp_path / "runtime.json")
+    store.save({"type": "MARKET_TICK", "capital": 5253.7, "total_trades": 3})
+    configure_runtime_state(store)
+
+    with TestClient(app) as websocket_client:
+        with websocket_client.websocket_connect("/ws") as websocket:
+            assert websocket.receive_json() == {
+                "type": "MARKET_TICK",
+                "capital": 5253.7,
+                "total_trades": 3,
+            }
+
+
 class FakeRemoteRenewal:
     login_url = "https://kite.example/login"
 
@@ -80,4 +103,3 @@ def test_dashboard_exposes_login_url_and_exchanges_redirect_without_access_token
         "restart_required": True,
     }
     assert "access_token" not in exchange.text
-

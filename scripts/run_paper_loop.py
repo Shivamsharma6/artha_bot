@@ -11,7 +11,7 @@ from decimal import Decimal
 
 from arthabot.audit_store import JsonlAuditStore
 from arthabot.brokerage import BrokerageCalculator, BrokerageConfig
-from arthabot.config import load_runtime_config
+from arthabot.config import load_runtime_config, parse_market_time
 from arthabot.deployment_config import load_deployment_config
 from arthabot.execution import ExecutionEngine
 from arthabot.http_clients import ZerodhaHttpClient, UrllibHttpTransport
@@ -76,14 +76,14 @@ def main(argv: list[str] | None = None) -> int:
     renewed_token = load_access_token_file(args.renewed_token_path)
     if renewed_token:
         os.environ["ZERODHA_ACCESS_TOKEN"] = renewed_token
-    try:
-        secrets = SecretConfig.from_env(require_zerodha=True)
-    except Exception as e:
-        logging.error(f"Failed to load secrets: {e}")
+    secrets = SecretConfig.from_env()
+    if not secrets.has_zerodha_api_credentials:
+        logging.error("ZERODHA_API_KEY and ZERODHA_API_SECRET are required")
         return 1
 
     deployment_config = load_deployment_config(args.config_dir)
     runtime_config = load_runtime_config(args.config_dir)
+    square_off_time = parse_market_time(runtime_config.risk.square_off_time)
     strategy_config = load_runtime_strategy_config(f"{args.config_dir}/strategy.yaml")
 
     audit = JsonlAuditStore(args.audit_path)
@@ -117,6 +117,9 @@ def main(argv: list[str] | None = None) -> int:
                 time.sleep(60)
         except KeyboardInterrupt:
             return 1
+
+    if not secrets.zerodha_access_token:
+        return hold_degraded_dashboard("KITE_REAUTH_REQUIRED")
     
     execution = ExecutionEngine()
     risk = RiskEngine(
@@ -158,6 +161,13 @@ def main(argv: list[str] | None = None) -> int:
         secret_config=secrets,
         transport=UrllibHttpTransport(base_url="https://api.kite.trade", timeout_seconds=3.0),
     )
+    try:
+        zerodha_client.fetch_margin_balance()
+    except KiteAuthenticationError:
+        return hold_degraded_dashboard("KITE_REAUTH_REQUIRED")
+    except Exception as exc:
+        logging.error("Kite credential probe unavailable: %s", exc)
+        return hold_degraded_dashboard("KITE_PROVIDER_UNAVAILABLE")
     
     instrument_store = InstrumentTokenStore(args.instrument_store_path)
     instrument_cache = InstrumentTokenCache(client=lambda exchange: zerodha_client.fetch_instruments(exchange=exchange))
@@ -173,19 +183,23 @@ def main(argv: list[str] | None = None) -> int:
     tokens = []
     token_to_symbol = {}
     today = datetime.now().date()
+    try:
+        instrument_cache.load(exchange="NSE", as_of=today, store=instrument_store)
+    except (FileNotFoundError, KeyError, ValueError):
+        logging.info("Today's instrument cache is unavailable; refreshing once from Kite")
+        try:
+            instrument_cache.refresh(exchange="NSE", as_of=today)
+        except Exception as exc:
+            logging.error("Instrument refresh failed: %s", exc)
+            return hold_degraded_dashboard("INSTRUMENT_PROVIDER_UNAVAILABLE")
+
     for sym in symbols_to_track:
         try:
             record = instrument_cache.lookup(exchange="NSE", tradingsymbol=sym, as_of=today)
             tok = record.instrument_token
         except (KeyError, ValueError):
-            logging.info(f"Could not resolve token for {sym}, fetching from Kite...")
-            try:
-                instrument_cache.refresh(exchange="NSE", as_of=today)
-                record = instrument_cache.lookup(exchange="NSE", tradingsymbol=sym, as_of=today)
-                tok = record.instrument_token
-            except Exception as e:
-                logging.error(f"Failed to fetch instruments: {e}")
-                tok = None
+            logging.error("Instrument token missing for NSE:%s", sym)
+            tok = None
         
         if tok:
             tokens.append(tok)
@@ -193,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not tokens:
         logging.error("No valid instrument tokens resolved.")
-        return hold_degraded_dashboard("KITE_REAUTH_REQUIRED")
+        return hold_degraded_dashboard("INSTRUMENT_TOKENS_UNAVAILABLE")
 
     feed_client = ZerodhaWebSocketFeedClient(
         secret_config=secrets,
@@ -232,6 +246,10 @@ def main(argv: list[str] | None = None) -> int:
         while True:
             time.sleep(args.interval_seconds)
             now = datetime.now()
+
+            if now.time() >= square_off_time:
+                set_runtime_health(trading_ready=False, reason_code="MARKET_CLOSED")
+                continue
             
             for sym in symbols_to_track:
                 health = pipeline.feed.health(sym, now=now)
@@ -297,7 +315,9 @@ def main(argv: list[str] | None = None) -> int:
                 "total_trades": total_trades,
                 "capital": capital,
                 "starting_capital": float(pipeline.session.starting_capital),
-                "daily_loss_limit": float(capital * runtime_config.risk.max_daily_loss_pct),
+                "daily_loss_limit": float(
+                    (pipeline.session.starting_capital + pnl) * runtime_config.risk.max_daily_loss_pct
+                ),
                 "mode": "PAPER",
                 "positions_list": positions,
                 "candidates": [f"{c.symbol} {c.direction.name} {c.strategy_version}" for c in candidates],

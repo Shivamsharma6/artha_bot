@@ -18,12 +18,12 @@ docker save -o ${TAR_FILE} ${IMAGE_NAME}
 
 echo "Transferring files to EC2..."
 chmod 600 .env
-scp -o StrictHostKeyChecking=no -i ${KEY_FILE} ${TAR_FILE} ${EC2_USER}@${EC2_IP}:~
-scp -o StrictHostKeyChecking=no -i ${KEY_FILE} .env ${EC2_USER}@${EC2_IP}:~
+scp -o StrictHostKeyChecking=no -i ${KEY_FILE} ${TAR_FILE} ${EC2_USER}@${EC2_IP}:/home/${EC2_USER}/${TAR_FILE}
+scp -o StrictHostKeyChecking=no -i ${KEY_FILE} .env ${EC2_USER}@${EC2_IP}:/home/${EC2_USER}/.env
 ssh -o StrictHostKeyChecking=no -i ${KEY_FILE} ${EC2_USER}@${EC2_IP} "chmod 600 ~/.env"
 
 echo "Loading image on EC2..."
-ssh -o StrictHostKeyChecking=no -i ${KEY_FILE} ${EC2_USER}@${EC2_IP} "docker load -i ${TAR_FILE}"
+ssh -o StrictHostKeyChecking=no -i ${KEY_FILE} ${EC2_USER}@${EC2_IP} "docker load -i /home/${EC2_USER}/${TAR_FILE}"
 
 echo "Restarting container on EC2..."
 ssh -o StrictHostKeyChecking=no -i ${KEY_FILE} ${EC2_USER}@${EC2_IP} "docker stop arthabot || true && docker rm arthabot || true"
@@ -31,6 +31,6 @@ ssh -o StrictHostKeyChecking=no -i ${KEY_FILE} ${EC2_USER}@${EC2_IP} "docker net
 ssh -o StrictHostKeyChecking=no -i ${KEY_FILE} ${EC2_USER}@${EC2_IP} "docker run -d --name arthabot --restart unless-stopped --network arthabot-network --env-file .env -v ~/arthabot-data:/opt/arthabot/data -v ~/arthabot-logs:/opt/arthabot/logs ${IMAGE_NAME}"
 
 echo "Cleaning up..."
-ssh -o StrictHostKeyChecking=no -i ${KEY_FILE} ${EC2_USER}@${EC2_IP} "rm ${TAR_FILE}"
+ssh -o StrictHostKeyChecking=no -i ${KEY_FILE} ${EC2_USER}@${EC2_IP} "rm /home/${EC2_USER}/${TAR_FILE}"
 rm ${TAR_FILE}
 echo "Deployment complete!"

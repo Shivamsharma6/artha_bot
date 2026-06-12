@@ -4,6 +4,12 @@ const statusEl = document.getElementById('connection-status');
 const logList = document.getElementById('log-list');
 const positionsCountEl = document.getElementById('positions-count');
 let websocketConnected = false;
+let websocket = null;
+let heartbeatTimer = null;
+let reconnectTimer = null;
+let reconnectDelay = 1000;
+let disconnectLogged = false;
+const authModalEl = document.getElementById('zerodha-auth-modal');
 const loginUrlEl = document.getElementById('zerodha-login-url');
 const redirectUrlEl = document.getElementById('zerodha-redirect-url');
 const authStatusEl = document.getElementById('zerodha-auth-status');
@@ -99,25 +105,20 @@ document.getElementById('exchange-zerodha-token').addEventListener('click', asyn
 });
 
 async function refreshRuntimeHealth() {
-    if (!websocketConnected) return;
     try {
         const response = await fetch('/api/health', { cache: 'no-store' });
         const health = await response.json();
-        const authSection = document.querySelector('.broker-auth');
-        
-        // Only show auth panel if explicitly missing token or requires reauth
-        const isAuthError = ['KITE_REAUTH_REQUIRED', 'MISSING_ZERODHA_TOKEN', 'ZERODHA_SESSION_EXPIRED', 'ZERODHA_TOKEN_INVALID', 'STARTING'].includes(health.reason_code);
+        const isAuthError = health.reason_code === 'KITE_REAUTH_REQUIRED';
+
+        if (isAuthError && !authModalEl.open) authModalEl.showModal();
+        if (!isAuthError && authModalEl.open) authModalEl.close();
 
         if (health.trading_ready) {
             statusEl.textContent = 'Connected (PAPER)';
             statusEl.className = 'status connected';
-            if (authSection) authSection.style.display = 'none';
         } else {
             statusEl.textContent = `Connected (PAPER, degraded: ${health.reason_code || 'unknown'})`;
             statusEl.className = 'status warning';
-            if (authSection) {
-                authSection.style.display = isAuthError ? 'block' : 'none';
-            }
         }
     } catch (error) {
         statusEl.textContent = 'Connected (health unavailable)';
@@ -126,11 +127,19 @@ async function refreshRuntimeHealth() {
 }
 
 function connectWebSocket() {
+    if (websocket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(websocket.readyState)) return;
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws`);
+    websocket = ws;
 
     ws.onopen = () => {
         websocketConnected = true;
+        reconnectDelay = 1000;
+        disconnectLogged = false;
+        clearTimeout(reconnectTimer);
+        heartbeatTimer = setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) ws.send('ping');
+        }, 25000);
         statusEl.textContent = 'Connected (PAPER)';
         statusEl.className = 'status connected';
         addLog('System: Connected to ArthaBot WebSocket', 'info');
@@ -138,15 +147,22 @@ function connectWebSocket() {
     };
 
     ws.onclose = () => {
+        clearInterval(heartbeatTimer);
         websocketConnected = false;
-        statusEl.textContent = 'Disconnected';
-        statusEl.className = 'status disconnected';
-        addLog('System: Disconnected. Reconnecting...', 'error');
-        setTimeout(connectWebSocket, 2000); // Reconnect
+        websocket = null;
+        if (!disconnectLogged) {
+            addLog('System: Connection interrupted. Retrying...', 'error');
+            disconnectLogged = true;
+        }
+        statusEl.textContent = 'Reconnecting';
+        statusEl.className = 'status warning';
+        reconnectTimer = setTimeout(connectWebSocket, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, 30000);
     };
 
     ws.onerror = (err) => {
         console.error('WebSocket Error:', err);
+        ws.close();
     };
 
     ws.onmessage = (event) => {
@@ -172,7 +188,7 @@ function connectWebSocket() {
                 }
                 if (data.capital !== undefined && data.pnl !== undefined) {
                     const capitalEl = document.getElementById('capital-value');
-                    const net = data.capital + data.pnl;
+                    const net = data.capital;
                     capitalEl.textContent = `₹${net.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
                 }
                 

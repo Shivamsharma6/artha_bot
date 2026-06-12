@@ -138,6 +138,8 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     active_connections.add(websocket)
     try:
+        if _runtime_state:
+            await websocket.send_json(dict(_runtime_state))
         while True:
             # Wait for messages to keep the connection open and handle disconnects
             await websocket.receive_text()

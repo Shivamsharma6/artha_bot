@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, time
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -8,6 +9,12 @@ from typing import Any
 import yaml
 
 from arthabot.common import Mode
+
+
+def parse_market_time(value: str | time) -> time:
+    if isinstance(value, time):
+        return value
+    return datetime.strptime(value, "%H:%M").time()
 
 
 @dataclass(frozen=True)
@@ -69,4 +76,3 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"{path} must contain a mapping")
     return data
-
