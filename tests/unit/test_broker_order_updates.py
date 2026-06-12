@@ -68,15 +68,29 @@ def test_broker_order_update_fails_closed_on_unknown_order(tmp_path):
     assert audit.read_all()[-1].event_type == "broker_order_update_failed_closed"
 
 
-def test_broker_order_update_fails_closed_on_partial_fill(tmp_path):
-    subject, _, _ = processor(tmp_path)
+def test_broker_order_update_applies_partial_fill(tmp_path):
+    subject, store, _ = processor(tmp_path)
 
     result = subject.process(
-        {"order_id": "o1", "tradingsymbol": "INFY", "status": "OPEN", "filled_quantity": 1, "transaction_type": "BUY"}
+        {"order_id": "o1", "tradingsymbol": "INFY", "status": "OPEN", "filled_quantity": 1, "transaction_type": "BUY", "average_price": "100"}
     )
 
-    assert result.reason_code == "PARTIAL_FILL_UNSUPPORTED"
-    assert result.must_stop_trading is True
+    assert result.reason_code == "BROKER_ORDER_FILL_APPLIED"
+    assert result.must_stop_trading is False
+    assert store.load().positions[0].quantity == 1
+
+
+def test_broker_order_update_applies_partial_fill_on_cancelled_order(tmp_path):
+    subject, store, _ = processor(tmp_path)
+
+    result = subject.process(
+        {"order_id": "o1", "tradingsymbol": "INFY", "status": "CANCELLED", "filled_quantity": 1, "transaction_type": "BUY", "average_price": "100"}
+    )
+
+    assert result.reason_code == "BROKER_ORDER_CANCELLED_APPLIED"
+    loaded = store.load()
+    assert loaded.positions[0].quantity == 1
+    assert loaded.orders[0].status == "CANCELLED"
 
 
 def test_broker_order_update_pairs_exit_fill_and_applies_cost_aware_net_pnl(tmp_path):

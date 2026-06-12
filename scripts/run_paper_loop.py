@@ -10,6 +10,7 @@ from decimal import Decimal
 
 from arthabot.audit_store import JsonlAuditStore
 from arthabot.brokerage import BrokerageCalculator, BrokerageConfig
+from arthabot.config import load_runtime_config
 from arthabot.deployment_config import load_deployment_config
 from arthabot.execution import ExecutionEngine
 from arthabot.http_clients import ZerodhaHttpClient, UrllibHttpTransport
@@ -27,10 +28,9 @@ import uvicorn
 from kiteconnect import KiteTicker
 
 
-def build_hermes_proposal(candidate, now) -> TradeProposal:
-    # A deterministic simulation of Hermes evaluation
-    # In reality, this would call an LLM agent/UAMS
-    entry = Decimal("100")  # Dummy entry, RiskEngine verifies actual quote
+def build_hermes_proposal(candidate, now, *, entry: Decimal) -> TradeProposal:
+    # Deterministic PAPER proposal built from a fresh broker tick. This is not
+    # promoted to LIVE and does not bypass the Risk Engine.
     return TradeProposal(
         symbol=candidate.symbol,
         direction=candidate.direction,
@@ -67,6 +67,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     deployment_config = load_deployment_config(args.config_dir)
+    runtime_config = load_runtime_config(args.config_dir)
     strategy_config = load_runtime_strategy_config(f"{args.config_dir}/strategy.yaml")
 
     audit = JsonlAuditStore(args.audit_path)
@@ -74,25 +75,34 @@ def main(argv: list[str] | None = None) -> int:
     execution = ExecutionEngine()
     risk = RiskEngine(
         config=RiskConfig(
-            starting_capital=Decimal("5000"),
-            max_risk_per_trade_pct=Decimal("0.01"),
-            max_daily_loss_pct=Decimal("0.03"),
-            min_allocation_pct=Decimal("0.05"),
-            max_trades_per_day=100,
-            quote_max_age_seconds=86400, # relaxed for testing
-            square_off_time="23:59", # relaxed for after-hours testing
+            starting_capital=runtime_config.risk.starting_capital,
+            max_risk_per_trade_pct=runtime_config.risk.max_risk_per_trade_pct,
+            max_daily_loss_pct=runtime_config.risk.max_daily_loss_pct,
+            min_allocation_pct=runtime_config.risk.min_allocation_pct,
+            max_trades_per_day=runtime_config.risk.max_trades_per_day,
+            quote_max_age_seconds=runtime_config.risk.quote_max_age_seconds,
+            square_off_time=runtime_config.risk.square_off_time,
         ),
         brokerage=BrokerageCalculator(BrokerageConfig())
     )
 
+    latest_entry_prices: dict[str, Decimal] = {}
+
+    def proposal_factory(candidate, now):
+        return build_hermes_proposal(
+            candidate,
+            now,
+            entry=latest_entry_prices[candidate.symbol],
+        )
+
     pipeline = PaperRuntimePipeline(
         trading_date=datetime.now().date(),
-        starting_capital=Decimal("5000"),
+        starting_capital=runtime_config.risk.starting_capital,
         execution=execution,
         risk=risk,
-        hermes=HermesAdapter(proposal_factory=build_hermes_proposal),
+        hermes=HermesAdapter(proposal_factory=proposal_factory),
         audit=audit,
-        max_tick_age_seconds=86400, # relaxed for after-hours testing
+        max_tick_age_seconds=runtime_config.risk.quote_max_age_seconds,
     )
 
     zerodha_client = ZerodhaHttpClient(
@@ -160,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
 
     market_provider = RuntimeMarketSnapshotProvider(
         top_movers_client=top_movers_client, 
-        max_age_seconds=86400
+        max_age_seconds=runtime_config.risk.quote_max_age_seconds,
     )
     composer = RuntimeStrategyCandidateComposer(
         market_provider=market_provider,
@@ -168,11 +178,11 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     def run_server():
-        uvicorn.run(app, host="127.0.0.1", port=8080, log_level="warning")
+        uvicorn.run(app, host="0.0.0.0", port=8080, log_level="warning")
 
     server_thread = threading.Thread(target=run_server, daemon=True)
     server_thread.start()
-    logging.info("Dashboard API Server started on http://127.0.0.1:8080")
+    logging.info("Dashboard API Server started on http://0.0.0.0:8080")
 
     logging.info("Paper trading loop started. Press Ctrl+C to stop.")
     try:
@@ -188,9 +198,26 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     logging.info(f"[{sym}] Feed Health: {health.reason_code}")
                     
-            candidates = list(composer.generate_from_top_movers(limit=5, now=now))
+            try:
+                candidates = list(composer.generate_from_top_movers(limit=5, now=now))
+            except Exception as exc:
+                logging.exception("Candidate refresh failed; skipping this cycle")
+                audit.append(
+                    event_type="paper_candidate_refresh_failed",
+                    payload={
+                        "error_type": type(exc).__name__,
+                        "message": str(exc),
+                        "timestamp": now.isoformat(),
+                    },
+                )
+                candidates = []
             for candidate in candidates:
                 logging.info(f"Processing candidate: {candidate.symbol} ({candidate.direction.name})")
+                health = pipeline.feed.health(candidate.symbol, now=now)
+                if not health.ok:
+                    pipeline.process_candidate(candidate, now=now)
+                    continue
+                latest_entry_prices[candidate.symbol] = pipeline.feed.latest_tick(candidate.symbol).price
                 pipeline.process_candidate(candidate, now=now)
             
             # Calculate stats

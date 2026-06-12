@@ -283,9 +283,10 @@ class HistoricalHttpClient:
         "day": "day",
     }
 
-    def __init__(self, *, base_path: str, transport: Transport) -> None:
+    def __init__(self, *, base_path: str, transport: Transport, secret_config: SecretConfig | None = None) -> None:
         self.base_path = base_path.rstrip("/")
         self.transport = transport
+        self.secret_config = secret_config
 
     def fetch(self, *, symbol: str, resolution: str) -> list[dict[str, Any]]:
         raw = self.transport(
@@ -310,10 +311,17 @@ class HistoricalHttpClient:
         interval = self.KITE_INTERVALS.get(resolution)
         if interval is None:
             raise ValueError(f"unsupported historical resolution: {resolution}")
+        headers = {}
+        if self.secret_config and self.secret_config.has_zerodha_credentials:
+            headers = {
+                "Authorization": f"token {self.secret_config.zerodha_api_key}:{self.secret_config.zerodha_access_token}",
+                "X-Kite-Version": "3",
+            }
         raw = self.transport(
             HttpRequest(
                 method="GET",
                 path=f"/instruments/historical/{instrument_token}/{interval}",
+                headers=headers,
                 query={
                     "from": self._format_kite_time(from_time),
                     "to": self._format_kite_time(to_time),
@@ -438,10 +446,12 @@ def build_historical_http_client(
     base_url: str,
     base_path: str = "/history",
     timeout_seconds: float = 5.0,
+    secret_config: SecretConfig | None = None,
 ) -> HistoricalHttpClient:
     return HistoricalHttpClient(
         base_path=base_path,
         transport=UrllibHttpTransport(base_url=base_url, timeout_seconds=timeout_seconds),
+        secret_config=secret_config,
     )
 
 

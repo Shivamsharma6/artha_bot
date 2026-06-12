@@ -44,6 +44,10 @@ class ForcedSquareOffService:
                 self.transitions.record_order_cancelled(order_id=order.order_id)
                 cancelled.append(response.order_id)
 
+            if cancelled:
+                import time
+                time.sleep(2.0)  # Wait for broker order updates to reconcile cancelled states and partial fills via WS
+
             snapshot = self.state_store.load()
             for position in snapshot.positions:
                 exit_direction = Direction.SHORT if position.direction == Direction.LONG else Direction.LONG

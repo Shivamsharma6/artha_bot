@@ -55,8 +55,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     max_ticks = 1 if args.once else args.max_ticks
-    if max_ticks is None:
-        return 2
     if not args.allow_noop_registry:
         if args.learning_queue_path is None or args.historical_json_path is None:
             return 2

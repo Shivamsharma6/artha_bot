@@ -53,7 +53,9 @@ class BrokerOrderUpdateProcessor:
         if order.status == status and order.filled_quantity == filled_quantity and status in self.TERMINAL_STATES:
             return self._duplicate(order_id)
 
-        if status in {"OPEN", "COMPLETE"} and filled_quantity > 0:
+        result = None
+        filled_delta = filled_quantity - order.filled_quantity
+        if filled_delta > 0:
             if status == "COMPLETE" and filled_quantity != order.expected_quantity:
                 return self._failed("FILL_MISMATCH", order_id=order_id)
             transaction_type = str(update.get("transaction_type", ""))
@@ -70,10 +72,7 @@ class BrokerOrderUpdateProcessor:
             )
             realized_delta = None
             if opposing is not None:
-                delta_quantity = filled_quantity - order.filled_quantity
-                if delta_quantity <= 0:
-                    return self._duplicate(order_id)
-                if opposing.quantity < delta_quantity or opposing.entry_price is None:
+                if opposing.quantity < filled_delta or opposing.entry_price is None:
                     return self._failed("EXIT_POSITION_STATE_MISMATCH", order_id=order_id)
                 cumulative = self.brokerage.estimate_intraday_equity(
                     side=TradeSide.LONG if opposing.direction == Direction.LONG else TradeSide.SHORT,
@@ -90,18 +89,26 @@ class BrokerOrderUpdateProcessor:
                         quantity=order.filled_quantity,
                     ).net_pnl
                 realized_delta = cumulative.net_pnl - previous_net
-            delta = self.transitions.record_fill_progress(
-                order_id=order_id,
-                cumulative_filled_quantity=filled_quantity,
-                cumulative_average_price=fill_price,
-                direction=fill_direction,
-                realized_net_pnl=realized_delta,
-            )
+            try:
+                delta = self.transitions.record_fill_progress(
+                    order_id=order_id,
+                    cumulative_filled_quantity=filled_quantity,
+                    cumulative_average_price=fill_price,
+                    direction=fill_direction,
+                    realized_net_pnl=realized_delta,
+                )
+            except ValueError as exc:
+                return self._failed("EXIT_POSITION_STATE_MISMATCH", order_id=order_id, error=str(exc))
             reason = "BROKER_EXIT_FILL_APPLIED" if opposing is not None else "BROKER_ORDER_FILL_APPLIED"
-            return self._applied(reason, order_id, net_pnl=realized_delta, filled_delta=delta)
+            result = self._applied(reason, order_id, net_pnl=realized_delta, filled_delta=delta)
+
         if status in {"CANCELLED", "REJECTED"}:
             self.transitions.record_order_cancelled(order_id=order_id)
-            return self._applied(f"BROKER_ORDER_{status}_APPLIED", order_id)
+            result = self._applied(f"BROKER_ORDER_{status}_APPLIED", order_id)
+
+        if result is not None:
+            return result
+
         if filled_quantity != order.filled_quantity:
             return self._failed("FILL_STATE_MISMATCH", order_id=order_id)
         return BrokerOrderUpdateResult(False, "BROKER_ORDER_UPDATE_NO_CHANGE", False)

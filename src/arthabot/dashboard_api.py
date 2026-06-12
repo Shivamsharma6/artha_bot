@@ -21,6 +21,11 @@ _state_queue = Queue()
 # Store active connections
 active_connections = set()
 
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "mode": "PAPER"}
+
 def broadcast_update(payload: dict):
     """Called by the bot to send data to the dashboard."""
     _state_queue.put(payload)
@@ -34,7 +39,7 @@ async def websocket_endpoint(websocket: WebSocket):
             # Wait for messages to keep the connection open and handle disconnects
             await websocket.receive_text()
     except WebSocketDisconnect:
-        active_connections.remove(websocket)
+        active_connections.discard(websocket)
 
 async def _queue_broadcaster():
     """Background task to read from queue and broadcast."""
@@ -46,7 +51,7 @@ async def _queue_broadcaster():
                 try:
                     await connection.send_json(payload)
                 except Exception:
-                    active_connections.remove(connection)
+                    active_connections.discard(connection)
         await asyncio.sleep(0.01)
 
 @app.on_event("startup")

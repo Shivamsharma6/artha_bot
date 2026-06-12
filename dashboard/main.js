@@ -5,10 +5,11 @@ const logList = document.getElementById('log-list');
 const positionsCountEl = document.getElementById('positions-count');
 
 function connectWebSocket() {
-    const ws = new WebSocket('ws://127.0.0.1:8080/ws');
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws`);
 
     ws.onopen = () => {
-        statusEl.textContent = 'Connected (LIVE)';
+        statusEl.textContent = 'Connected (PAPER)';
         statusEl.className = 'status connected';
         addLog('System: Connected to ArthaBot WebSocket', 'info');
     };

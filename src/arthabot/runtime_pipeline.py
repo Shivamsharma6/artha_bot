@@ -51,6 +51,14 @@ class PaperRuntimePipeline:
         self.feed.record_tick(tick)
 
     def process_candidate(self, candidate: TradeCandidate, *, now: datetime) -> OrderResult | None:
+        health = self.feed.health(candidate.symbol, now=now)
+        if not health.ok:
+            self.session.reject(symbol=candidate.symbol, reason=health.reason_code)
+            self.audit.append(
+                event_type="risk_rejection",
+                payload={"symbol": candidate.symbol, "reason_code": health.reason_code},
+            )
+            return None
         proposal = self.hermes.evaluate(candidate, now=now)
         self.audit.append(
             event_type="decision",
@@ -60,14 +68,6 @@ class PaperRuntimePipeline:
                 "strategy_version": proposal.strategy_version,
             },
         )
-        health = self.feed.health(candidate.symbol, now=now)
-        if not health.ok:
-            self.session.reject(symbol=candidate.symbol, reason=health.reason_code)
-            self.audit.append(
-                event_type="risk_rejection",
-                payload={"symbol": candidate.symbol, "reason_code": health.reason_code},
-            )
-            return None
         tick = self.feed.latest_tick(candidate.symbol)
         decision = self.risk.evaluate(
             proposal=proposal,
